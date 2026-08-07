@@ -140,15 +140,16 @@ function logMissed(query, bestGuessTitle, bestGuessScore) {
 }
 
 // 통계용: 맞았든 못 맞았든 모든 질문을 기록
-function trackQuery(query, matchedTitle, matched, source) {
+function trackQuery(query, matchedTitle, matched, source, visitorId) {
   const list = readJson(QUERIES_PATH, []);
-  list.push({ time: new Date().toISOString(), query: query||'', matchedTitle: matchedTitle||'', matched: !!matched, source: source||'unknown' });
+  list.push({ time: new Date().toISOString(), query: query||'', matchedTitle: matchedTitle||'', matched: !!matched, source: source||'unknown', visitorId: visitorId||'' });
   if (list.length > 20000) list.shift();
   writeJson(QUERIES_PATH, list);
 }
 
 function requireAdmin(req, res, next) {
-  if (req.header('x-admin-token') !== ADMIN_TOKEN) {
+  const given = (req.header('x-admin-token') || '').trim();
+  if (given !== ADMIN_TOKEN.trim()) {
     return res.status(401).json({ error: '관리자 토큰이 올바르지 않습니다.' });
   }
   next();
@@ -187,8 +188,8 @@ app.post('/api/log', (req, res) => {
 
 // 통계용: 모든 질문 기록 (맞았든 못 맞았든) — 웹챗봇이 질문할 때마다 호출
 app.post('/api/track', (req, res) => {
-  const { query, matchedTitle, matched, source } = req.body || {};
-  trackQuery(query, matchedTitle, matched, source || 'web');
+  const { query, matchedTitle, matched, source, visitorId } = req.body || {};
+  trackQuery(query, matchedTitle, matched, source || 'web', visitorId);
   res.json({ status: 'ok' });
 });
 
@@ -197,12 +198,13 @@ app.post('/api/track', (req, res) => {
 // 폴백 블록의 응답을 "스킬"로 설정하면 됩니다.
 app.post('/api/kakao-skill', (req, res) => {
   const utterance = (req.body && req.body.userRequest && req.body.userRequest.utterance) || '';
+  const kakaoUserId = (req.body && req.body.userRequest && req.body.userRequest.user && req.body.userRequest.user.id) || '';
   const blocks = getEffectiveUtterances();
   const best = findBestBlock(utterance, blocks);
 
   if (best.idx === -1 || best.score < 0.30) {
     logMissed(utterance, best.idx>=0 ? blocks[best.idx].title : '', best.score);
-    trackQuery(utterance, best.idx>=0 ? blocks[best.idx].title : '', false, 'kakao');
+    trackQuery(utterance, best.idx>=0 ? blocks[best.idx].title : '', false, 'kakao', 'kakao:'+kakaoUserId);
     const cands = topCandidates(utterance, blocks, 3);
     return res.json({
       version: '2.0',
@@ -214,7 +216,7 @@ app.post('/api/kakao-skill', (req, res) => {
     });
   }
 
-  trackQuery(utterance, blocks[best.idx].title, true, 'kakao');
+  trackQuery(utterance, blocks[best.idx].title, true, 'kakao', 'kakao:'+kakaoUserId);
   const block = blocks[best.idx];
   const outputs = [];
   block.responses.forEach(r => {
@@ -254,7 +256,7 @@ app.delete('/api/admin/missed/:i', requireAdmin, (req, res) => {
   res.json({ status: 'ok' });
 });
 
-// 사용 통계: 인기 질문, 일별 추이, 매칭 성공률
+// 사용 통계: 인기 질문, 일별 추이, 매칭 성공률, 순방문자
 app.get('/api/admin/stats', requireAdmin, (req, res) => {
   const list = readJson(QUERIES_PATH, []);
   const total = list.length;
@@ -264,16 +266,33 @@ app.get('/api/admin/stats', requireAdmin, (req, res) => {
   list.forEach(e => { if (e.matched && e.matchedTitle) byTitle[e.matchedTitle] = (byTitle[e.matchedTitle]||0)+1; });
   const topBlocks = Object.entries(byTitle).sort((a,b)=>b[1]-a[1]).slice(0,15).map(([title,count])=>({title,count}));
 
-  const byDay = {};
-  list.forEach(e => { const d = (e.time||'').slice(0,10); if(d) byDay[d] = (byDay[d]||0)+1; });
-  const days = Object.keys(byDay).sort().slice(-14).map(d => ({date:d, count:byDay[d]}));
+  const byDayCount = {};
+  const byDayVisitors = {}; // date -> Set(visitorId)
+  list.forEach(e => {
+    const d = (e.time||'').slice(0,10);
+    if (!d) return;
+    byDayCount[d] = (byDayCount[d]||0)+1;
+    if (e.visitorId) {
+      if (!byDayVisitors[d]) byDayVisitors[d] = new Set();
+      byDayVisitors[d].add(e.visitorId);
+    }
+  });
+  const days = Object.keys(byDayCount).sort().slice(-14).map(d => ({
+    date: d, count: byDayCount[d], uniqueVisitors: byDayVisitors[d] ? byDayVisitors[d].size : 0
+  }));
 
   const bySource = {};
   list.forEach(e => { const s = e.source||'unknown'; bySource[s] = (bySource[s]||0)+1; });
 
+  const allVisitorIds = new Set(list.map(e => e.visitorId).filter(Boolean));
+  const visitorQueryCounts = {};
+  list.forEach(e => { if (e.visitorId) visitorQueryCounts[e.visitorId] = (visitorQueryCounts[e.visitorId]||0)+1; });
+  const avgQueriesPerVisitor = allVisitorIds.size ? Number((total/allVisitorIds.size).toFixed(1)) : 0;
+
   res.json({
     total, matchedCount, unmatchedCount: total - matchedCount,
     matchRate: total ? Number((matchedCount/total*100).toFixed(1)) : 0,
+    uniqueVisitors: allVisitorIds.size, avgQueriesPerVisitor,
     topBlocks, days, bySource
   });
 });
