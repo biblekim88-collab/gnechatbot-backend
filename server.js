@@ -22,6 +22,7 @@ const DATA_DIR = path.join(__dirname, 'data');
 const SCENARIOS_PATH = path.join(DATA_DIR, 'scenarios.json');
 const LEARNED_PATH = path.join(DATA_DIR, 'learned.json');
 const MISSED_PATH = path.join(DATA_DIR, 'missed.json');
+const QUERIES_PATH = path.join(DATA_DIR, 'queries.json');
 
 function readJson(p, fallback) {
   try { return JSON.parse(fs.readFileSync(p, 'utf-8')); }
@@ -138,6 +139,14 @@ function logMissed(query, bestGuessTitle, bestGuessScore) {
   writeJson(MISSED_PATH, list);
 }
 
+// 통계용: 맞았든 못 맞았든 모든 질문을 기록
+function trackQuery(query, matchedTitle, matched, source) {
+  const list = readJson(QUERIES_PATH, []);
+  list.push({ time: new Date().toISOString(), query: query||'', matchedTitle: matchedTitle||'', matched: !!matched, source: source||'unknown' });
+  if (list.length > 20000) list.shift();
+  writeJson(QUERIES_PATH, list);
+}
+
 function requireAdmin(req, res, next) {
   if (req.header('x-admin-token') !== ADMIN_TOKEN) {
     return res.status(401).json({ error: '관리자 토큰이 올바르지 않습니다.' });
@@ -176,6 +185,13 @@ app.post('/api/log', (req, res) => {
   res.json({ status: 'ok' });
 });
 
+// 통계용: 모든 질문 기록 (맞았든 못 맞았든) — 웹챗봇이 질문할 때마다 호출
+app.post('/api/track', (req, res) => {
+  const { query, matchedTitle, matched, source } = req.body || {};
+  trackQuery(query, matchedTitle, matched, source || 'web');
+  res.json({ status: 'ok' });
+});
+
 // ---- 카카오톡 오픈빌더 폴백 스킬 웹훅 ----
 // 오픈빌더 > 스킬 관리 > 새 스킬 등록 시 이 주소를 URL로 등록하고,
 // 폴백 블록의 응답을 "스킬"로 설정하면 됩니다.
@@ -186,6 +202,7 @@ app.post('/api/kakao-skill', (req, res) => {
 
   if (best.idx === -1 || best.score < 0.30) {
     logMissed(utterance, best.idx>=0 ? blocks[best.idx].title : '', best.score);
+    trackQuery(utterance, best.idx>=0 ? blocks[best.idx].title : '', false, 'kakao');
     const cands = topCandidates(utterance, blocks, 3);
     return res.json({
       version: '2.0',
@@ -197,6 +214,7 @@ app.post('/api/kakao-skill', (req, res) => {
     });
   }
 
+  trackQuery(utterance, blocks[best.idx].title, true, 'kakao');
   const block = blocks[best.idx];
   const outputs = [];
   block.responses.forEach(r => {
@@ -233,6 +251,34 @@ app.delete('/api/admin/missed/:i', requireAdmin, (req, res) => {
   const i = Number(req.params.i);
   if (i>=0 && i<list.length) list.splice(i,1);
   writeJson(MISSED_PATH, list);
+  res.json({ status: 'ok' });
+});
+
+// 사용 통계: 인기 질문, 일별 추이, 매칭 성공률
+app.get('/api/admin/stats', requireAdmin, (req, res) => {
+  const list = readJson(QUERIES_PATH, []);
+  const total = list.length;
+  const matchedCount = list.filter(e => e.matched).length;
+
+  const byTitle = {};
+  list.forEach(e => { if (e.matched && e.matchedTitle) byTitle[e.matchedTitle] = (byTitle[e.matchedTitle]||0)+1; });
+  const topBlocks = Object.entries(byTitle).sort((a,b)=>b[1]-a[1]).slice(0,15).map(([title,count])=>({title,count}));
+
+  const byDay = {};
+  list.forEach(e => { const d = (e.time||'').slice(0,10); if(d) byDay[d] = (byDay[d]||0)+1; });
+  const days = Object.keys(byDay).sort().slice(-14).map(d => ({date:d, count:byDay[d]}));
+
+  const bySource = {};
+  list.forEach(e => { const s = e.source||'unknown'; bySource[s] = (bySource[s]||0)+1; });
+
+  res.json({
+    total, matchedCount, unmatchedCount: total - matchedCount,
+    matchRate: total ? Number((matchedCount/total*100).toFixed(1)) : 0,
+    topBlocks, days, bySource
+  });
+});
+app.delete('/api/admin/stats', requireAdmin, (req, res) => {
+  writeJson(QUERIES_PATH, []);
   res.json({ status: 'ok' });
 });
 
