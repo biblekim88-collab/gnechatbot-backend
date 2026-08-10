@@ -396,8 +396,13 @@ const SESSION_TTL_MS = 15 * 60 * 1000;
 // 카카오에서 질문을 연속으로 못 알아들은 횟수 관리
 // 2회 이상 연속 실패하면 1:1 채팅상담 바로가기를 우선 노출합니다.
 const KAKAO_FAIL_STREAKS = new Map();
+// 전학 관련 질문의 연속 실패 횟수는 별도로 관리합니다.
+// 고등학교 전학 맥락에서 2회 이상 실패하면 참고용 AI 상담 링크를 함께 노출합니다.
+const KAKAO_TRANSFER_FAIL_STREAKS = new Map();
 const FAIL_STREAK_TTL_MS = 30 * 60 * 1000;
 const FAIL_STREAK_ESCALATE_AT = 2;
+const TRANSFER_AI_ESCALATE_AT = 2;
+const HIGH_SCHOOL_TRANSFER_GPT_URL = 'https://chatgpt.com/g/g-6a797a1288d08191a19ab551961d9fdd-godeunghaggyo-jeonibhag';
 
 function getKakaoFailStreak(kakaoUserId) {
   if (!kakaoUserId) return 0;
@@ -420,6 +425,54 @@ function markKakaoFailure(kakaoUserId) {
 function resetKakaoFailStreak(kakaoUserId) {
   if (!kakaoUserId) return;
   KAKAO_FAIL_STREAKS.delete(kakaoUserId);
+}
+
+function getKakaoTransferFailStreak(kakaoUserId) {
+  if (!kakaoUserId) return { count: 0, highSchool: false };
+  const entry = KAKAO_TRANSFER_FAIL_STREAKS.get(kakaoUserId);
+  if (!entry) return { count: 0, highSchool: false };
+  if (Date.now() - entry.updatedAt > FAIL_STREAK_TTL_MS) {
+    KAKAO_TRANSFER_FAIL_STREAKS.delete(kakaoUserId);
+    return { count: 0, highSchool: false };
+  }
+  return { count: entry.count || 0, highSchool: !!entry.highSchool };
+}
+
+function markKakaoTransferFailure(kakaoUserId, highSchool) {
+  if (!kakaoUserId) return { count: 1, highSchool: !!highSchool };
+  const prev = getKakaoTransferFailStreak(kakaoUserId);
+  const next = {
+    count: prev.count + 1,
+    // 한 번이라도 고등학교 맥락이 확인되면 같은 연속 실패 흐름에서는 유지
+    highSchool: !!(prev.highSchool || highSchool),
+    updatedAt: Date.now()
+  };
+  KAKAO_TRANSFER_FAIL_STREAKS.set(kakaoUserId, next);
+  return next;
+}
+
+function resetKakaoTransferFailStreak(kakaoUserId) {
+  if (!kakaoUserId) return;
+  KAKAO_TRANSFER_FAIL_STREAKS.delete(kakaoUserId);
+}
+
+function getTransferFailureContext(rawQuery, blocks, bestCandidate) {
+  const q = compactText(expandQuery(rawQuery));
+  const title = bestCandidate && bestCandidate.idx >= 0 && blocks[bestCandidate.idx]
+    ? String(blocks[bestCandidate.idx].title || '')
+    : '';
+
+  const directTransfer = /(전입학|전학|학교옮|거주지이전)/.test(q);
+  const candidateTransfer = /(전입학|전학|선배정|재배정|귀국자편입학)/.test(compactText(title));
+  const explicitHigh = /(고등학교|고교|고딩|고등학생)/.test(q);
+  const candidateHigh = /(고등학교|진로변경|귀국자편입학)/.test(compactText(title));
+  const explicitNonHigh = /(중학교|중딩|중학생|초등학교|초딩|초등학생)/.test(q);
+
+  return {
+    isTransfer: directTransfer || candidateTransfer,
+    // 중·초등학교가 명시되면 고등학교 GPT를 노출하지 않음
+    highSchool: !explicitNonHigh && (explicitHigh || candidateHigh)
+  };
 }
 const SESSION_MAX_MESSAGES = 6;
 
@@ -839,6 +892,8 @@ function buildBlockQuickReplies(block, blocks) {
 
 function kakaoFallbackResponse(utterance, blocks, options = {}) {
   const failCount = Number(options.failCount || 0);
+  const transferFailCount = Number(options.transferFailCount || 0);
+  const showTransferAi = !!options.showTransferAi && transferFailCount >= TRANSFER_AI_ESCALATE_AT;
   const escalated = failCount >= FAIL_STREAK_ESCALATE_AT;
   const cands = topCandidates(utterance, blocks, 3);
 
@@ -852,6 +907,16 @@ function kakaoFallbackResponse(utterance, blocks, options = {}) {
   const cardButtons = [];
 
   if (escalated) {
+    // 고등학교 전학 관련 질문을 연속 2회 이상 못 알아들었을 때만
+    // 참고용 GPT 링크를 상담 수단보다 먼저 노출합니다.
+    if (showTransferAi) {
+      cardButtons.push({
+        label: '🤖 고등학교 전입학 AI 참고',
+        action: 'webLink',
+        webLinkUrl: HIGH_SCHOOL_TRANSFER_GPT_URL
+      });
+    }
+
     const chatBlock = blocks.find(b => (b.title || '').trim() === '일대일 채팅 상담 안내');
     const chatBlockId = getKakaoBlockId(chatBlock);
     if (chatBlockId) {
@@ -878,7 +943,9 @@ function kakaoFallbackResponse(utterance, blocks, options = {}) {
   }
 
   const text = escalated
-    ? '제가 질문을 계속 정확히 이해하지 못했어요😥\n조금 더 구체적으로 말씀해주시거나 아래 관련 항목을 선택해주세요.\n\n💡궁금증이 해결되지 않았다면 1:1 채팅상담 또는 경남교육콜센터(055-268-1004)를 이용해주세요🤗'
+    ? (showTransferAi
+      ? '제가 전학 관련 질문을 계속 정확히 이해하지 못했어요😥\n아래 관련 항목을 선택하시거나 고등학교 전입학 AI 안내를 참고해 주세요.\n\n💡AI 안내는 참고용이며, 실제 전입학 절차는 교육청의 공식 안내를 통해 다시 한 번 확인해 주세요.'
+      : '제가 질문을 계속 정확히 이해하지 못했어요😥\n조금 더 구체적으로 말씀해주시거나 아래 관련 항목을 선택해주세요.\n\n💡궁금증이 해결되지 않았다면 1:1 채팅상담 또는 경남교육콜센터(055-268-1004)를 이용해주세요🤗')
     : '제가 질문을 정확히 이해하지 못했어요😥\n조금 더 구체적으로 다시 말씀해주시거나 아래 관련 항목을 선택해주세요.';
 
   // 혹시 후보가 중복된 경우 제거
@@ -1062,6 +1129,7 @@ app.post('/api/kakao-skill', async (req, res) => {
   // 고등학교/중학교 전입학 두 선택지를 함께 보여줍니다.
   if (needsTransferSchoolLevel(utterance)) {
     resetKakaoFailStreak(kakaoUserId);
+    resetKakaoTransferFailStreak(kakaoUserId);
     trackQuery(utterance, '전입학 학교급 확인', true, 'kakao-clarify-transfer-level', 'kakao:' + kakaoUserId);
     return res.json(kakaoTransferSchoolLevelResponse(blocks));
   }
@@ -1071,6 +1139,7 @@ app.post('/api/kakao-skill', async (req, res) => {
   if (match.matched && match.idx >= 0) {
     const block = blocks[match.idx];
     resetKakaoFailStreak(kakaoUserId);
+    resetKakaoTransferFailStreak(kakaoUserId);
     trackQuery(utterance, block.title, true, 'kakao-smart-' + match.reason, 'kakao:' + kakaoUserId);
 
     const outputs = [];
@@ -1098,24 +1167,47 @@ app.post('/api/kakao-skill', async (req, res) => {
 
   if (!AI_ENABLED) {
     const failCount = markKakaoFailure(kakaoUserId);
+    const transferContext = getTransferFailureContext(utterance, blocks, bestCandidate);
+    let transferFail = { count: 0, highSchool: false };
+    if (transferContext.isTransfer) {
+      transferFail = markKakaoTransferFailure(kakaoUserId, transferContext.highSchool);
+    } else {
+      resetKakaoTransferFailStreak(kakaoUserId);
+    }
     logMissed(utterance, bestCandidate ? blocks[bestCandidate.idx].title : '', bestCandidate ? bestCandidate.score : 0);
     trackQuery(utterance, bestCandidate ? blocks[bestCandidate.idx].title : '', false, 'kakao-no-ai-ambiguous', 'kakao:' + kakaoUserId);
-    return res.json(kakaoFallbackResponse(utterance, blocks, { failCount }));
+    return res.json(kakaoFallbackResponse(utterance, blocks, {
+      failCount,
+      transferFailCount: transferFail.count,
+      showTransferAi: transferFail.highSchool
+    }));
   }
 
   try {
     const answer = await askClaudeGrounded({ utterance, kakaoUserId, candidates, blocks });
     const candidateTitle = candidates.length ? blocks[candidates[0].idx].title : '';
     resetKakaoFailStreak(kakaoUserId);
+    resetKakaoTransferFailStreak(kakaoUserId);
     trackQuery(utterance, candidateTitle ? `AI:${candidateTitle}` : 'AI', true, 'kakao-ai', 'kakao:' + kakaoUserId);
     rememberTurn(kakaoUserId, utterance, answer);
     return res.json(kakaoAiResponse(answer, candidates, blocks));
   } catch (err) {
     console.error('카카오 AI 응답 오류:', err && err.message ? err.message : err);
     const failCount = markKakaoFailure(kakaoUserId);
+    const transferContext = getTransferFailureContext(utterance, blocks, bestCandidate);
+    let transferFail = { count: 0, highSchool: false };
+    if (transferContext.isTransfer) {
+      transferFail = markKakaoTransferFailure(kakaoUserId, transferContext.highSchool);
+    } else {
+      resetKakaoTransferFailStreak(kakaoUserId);
+    }
     logMissed(utterance, bestCandidate ? blocks[bestCandidate.idx].title : '', bestCandidate ? bestCandidate.score : 0);
     trackQuery(utterance, bestCandidate ? blocks[bestCandidate.idx].title : '', false, 'kakao-ai-error', 'kakao:' + kakaoUserId);
-    return res.json(kakaoFallbackResponse(utterance, blocks, { failCount }));
+    return res.json(kakaoFallbackResponse(utterance, blocks, {
+      failCount,
+      transferFailCount: transferFail.count,
+      showTransferAi: transferFail.highSchool
+    }));
   }
 });
 
