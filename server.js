@@ -847,16 +847,10 @@ function kakaoFallbackResponse(utterance, blocks, options = {}) {
     .map(c => makeKakaoQuickReply(blocks[c.idx]))
     .filter(q => q.label);
 
-  // 안내/상담 연결은 예전 폴백 블록처럼 말풍선 안의 세로 버튼(textCard)으로 표시합니다.
-  const cardButtons = [
-    {
-      label: '☎경남교육콜센터 전화연결',
-      action: 'phone',
-      phoneNumber: '0552681004'
-    }
-  ];
+  // 1회 실패: 상담/전화 버튼을 띄우지 않고 챗봇에 한 번 더 질문하도록 유도합니다.
+  // 2회 이상 연속 실패: 1:1 채팅상담 -> 콜센터 순서로 상담 수단을 노출합니다.
+  const cardButtons = [];
 
-  // 2회 이상 연속으로 못 알아들었을 때만 1:1 채팅상담 버튼을 추가합니다.
   if (escalated) {
     const chatBlock = blocks.find(b => (b.title || '').trim() === '일대일 채팅 상담 안내');
     const chatBlockId = getKakaoBlockId(chatBlock);
@@ -875,11 +869,17 @@ function kakaoFallbackResponse(utterance, blocks, options = {}) {
         messageText: '1:1 채팅상담'
       });
     }
+
+    cardButtons.push({
+      label: '☎경남교육콜센터 전화연결',
+      action: 'phone',
+      phoneNumber: '0552681004'
+    });
   }
 
   const text = escalated
-    ? '제가 질문을 계속 정확히 이해하지 못했어요😥\n조금 더 구체적으로 말씀해주시거나 아래 관련 항목을 선택해주세요.\n\n💡궁금증이 해결되지 않았다면 1:1 채팅상담 또는 경남교육콜센터(055-268-1004)에 문의해주세요🤗'
-    : '제가 질문을 정확히 확인하기 어려워요😥\n조금 더 구체적으로 말씀해주시거나 아래 관련 항목 중에서 골라주세요.\n\n💡궁금증이 해결되지 않았다면 경남교육콜센터(055-268-1004)에 문의해주세요🤗';
+    ? '제가 질문을 계속 정확히 이해하지 못했어요😥\n조금 더 구체적으로 말씀해주시거나 아래 관련 항목을 선택해주세요.\n\n💡궁금증이 해결되지 않았다면 1:1 채팅상담 또는 경남교육콜센터(055-268-1004)를 이용해주세요🤗'
+    : '제가 질문을 정확히 이해하지 못했어요😥\n조금 더 구체적으로 다시 말씀해주시거나 아래 관련 항목을 선택해주세요.';
 
   // 혹시 후보가 중복된 경우 제거
   const seen = new Set();
@@ -890,15 +890,13 @@ function kakaoFallbackResponse(utterance, blocks, options = {}) {
     return true;
   });
 
+  const textCard = { text };
+  if (cardButtons.length) textCard.buttons = cardButtons.slice(0, 3);
+
   return {
     version: '2.0',
     template: {
-      outputs: [{
-        textCard: {
-          text,
-          buttons: cardButtons.slice(0, 3)
-        }
-      }],
+      outputs: [{ textCard }],
       quickReplies: deduped.slice(0, 10)
     }
   };
