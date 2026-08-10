@@ -302,33 +302,178 @@ function buildGroundingContext(candidates, blocks) {
   return chunks.join('\n');
 }
 
+const KAKAO_BLOCK_ID_OVERRIDES = Object.freeze({
+  "챗봇 이용 안내": "6a4cb8c65ee4c08b0a7e49d2",
+  "질문 인식 불가 안내": "6a68096268acf42eb9607e01",
+  "제증명 종합 안내": "6a0ea9d924bd2a247fde2a45",
+  "졸업증명서": "6a47545a01d198c4c6844cf5",
+  "재학증명서": "6a4ca674457c528697144a22",
+  "생활기록부": "6a4f0de8178bd9946a58e6ad",
+  "성적증명서": "6a47564a1c43d2c132f18fbe",
+  "제적증명서": "6a4ca7a1178bd9946a57f271",
+  "정원외관리증명서": "6a4ca845457c528697144a92",
+  "경력증명서": "6a583f8068acf42eb95c641d",
+  "퇴직증명원": "6a58620f95f722d77d9169cf",
+  "개명 후 제증명 발급": "6a4ca9f15ee4c08b0a7e41d7",
+  "제증명 구비서류": "6a4cb4782c03941dfb900776",
+  "영문증명서": "6a4f0ef1457c528697154767",
+  "검정고시 관련 제증명": "6a4f19ff178bd9946a58e83d",
+  "검정고시개명": "6a62ee7ebfeff424f8527fad",
+  "학원 관련 제증명": "6a4f40895ee4c08b0a7f4d3b",
+  "민원실 이용 안내": "6a4f48505ee4c08b0a7f4e84",
+  "일대일 채팅 상담 안내": "6a50688b2c03941dfb917d0f",
+  "연수이수확인서": "6a58662bfd013545b641a6e6",
+  "북한이탈주민 학력증명서": "6a58698dfb99c80dbe7cdff5",
+  "팩스민원": "6a58929795f722d77d9174a0",
+  "정보공개청구": "6a66a2426156d57563047b5a",
+  "교원자격 무시험검정": "6a66c1c5fb99c80dbe808d91",
+  "칭찬합시다": "6a685285b11ba04bddec05f7",
+  "갑질직장내괴롭힘신고": "6a68536abfeff424f8539782",
+  "국민신문고": "6a66a77c68acf42eb960239c",
+  "교육감에게 바란다": "6a68517afd013545b645d156",
+  "국민공무원제안": "6a686840b11ba04bddec094d",
+  "교원자격증 재교부": "6a66bf214ea9d954e49963ae",
+  "안전신문고": "6a6859414ea9d954e499d988",
+  "신고센터": "6a685758b11ba04bddec06e3",
+  "성희롱성폭행 신고센터": "6a685b516156d5756304f6b2",
+  "불법사교육신고센터": "6a68585b68acf42eb960a0ba",
+  "감사반장에게 바란다": "6a685c8e6156d5756304f6e1",
+  "교육감신문고 부패비리신고": "6a685aabbfeff424f85398c0",
+  "부패공익신고": "6a68133b95f722d77d956673",
+  "입학 전 선배정": "6a62b1724ea9d954e498a1be",
+  "타 학군 재배정": "6a62b8516156d5756303c753",
+  "수능 원서접수": "6a62bfae6156d5756303c914",
+  "수능 원서접수 기간": "6a62c00dfb99c80dbe7fdfdd",
+  "대입정보센터": "6a69629ebfeff424f853e06d",
+  "꿈디딤카드 종합 안내": "6a62bfedbfeff424f85275e6",
+  "꿈디딤카드 재사용재발급": "6a62c84c4ea9d954e498a57e",
+  "꿈디딤카드 결제오류": "6a62c90eb11ba04bddeadffa",
+  "꿈디딤카드 미지급": "6a62c9a14ea9d954e498a5da",
+  "꿈디딤카드 잔액 확인": "6a62cb3068acf42eb95f6e21",
+  "고등학교전입학": "6a62cda8fd013545b644a4e4",
+  "고등학교전입학제출서류": "6a62ce0fb11ba04bddeae0bb",
+  "초중학교전입학": "6a62cf5e95f722d77d945485",
+  "진로변경 전입학": "6a686e23bfeff424f8539d2d",
+  "고등학교 귀국자 편입학": "6a686f9c68acf42eb960a6c4",
+  "거점형연계형 돌봄기관": "6a681a106156d5756304e281",
+  "유아학비": "6a671131bfeff424f8533435",
+  "유아학비 신청 및 지급방법": "6a6711f06156d57563048baf",
+  "특수교육대상자 선정배치": "6a67148e6156d57563048c02",
+  "사립유치원 무상교육": "6a6714b3b11ba04bddeba382",
+  "유치원 일반 안내": "6a62e4a04ea9d954e498adfc",
+  "행복학교": "6a671714b11ba04bddeba3d6",
+  "미래교육지구": "6a671740b11ba04bddeba404",
+  "학부모교육": "6a6717466156d57563048cb5",
+  "경남교육청 위치": "6a66acf1fb99c80dbe808a50",
+  "아이톡톡아이북": "6a66bc94bfeff424f85325b1",
+  "청사 배치": "6a62f15368acf42eb95f75b9",
+  "학사일정": "6a66b2f2bfeff424f853244b",
+  "학교찾기": "6a68672395f722d77d958371",
+  "신이설학교 현황": "6a61c81c4ea9d954e4982755",
+  "경남교육청 공식SNS": "6a686c48fb99c80dbe81097f",
+  "교육지원청 안내": "6a686b2bfb99c80dbe810946",
+  "스승찾기": "6a62d1d668acf42eb95f6f4c",
+  "경상남도교육청 시설개방": "6a6848f06156d5756304eba5",
+  "학교시설 예약": "6a62d47ebfeff424f8527c2d",
+  "학교시설 사용료": "6a62d5016156d5756303cf26",
+  "경남교육감인수위원회 백서": "6a6868c1bfeff424f8539ae9",
+  "교명 변경학교": "6a61c91d6156d57563033b4a",
+  "경남교육소식지신청및해지": "6a61c8e0bfeff424f851f196",
+  "교육환경보호구역": "6a6816e5fb99c80dbe80ea9c",
+  "학교안전공제회": "6a68189dfb99c80dbe80eee7",
+  "검정고시 종합 안내": "6a62e58dfb99c80dbe7fe7b2",
+  "2026년 제2회 검정고시": "6a62e5d095f722d77d945c73",
+  "검정고시 자주 묻는 질문": "6a62e8d0bfeff424f8527ec8",
+  "검정고시 제출서류": "6a62eb9bfb99c80dbe7fe899",
+  "공기정화장치": "6a61c646fd013545b6441bfb",
+  "공간재구조화사업": "6a61c6a66156d57563033af0",
+  "교육급여": "6a61a87995f722d77d93c279",
+  "다자녀카드사업안내": "6a61b8354ea9d954e4981dbf",
+  "다자녀카드사용처안내": "6a61bfc4fb99c80dbe7f4850",
+  "경남교육복지정책": "6a686a2768acf42eb960a36e",
+  "교권 심리상담": "6a61c5706156d575630337ad",
+  "지능형 과학실": "6a62af2868acf42eb95f68b2",
+  "AI디지털 활용 연구선도학교": "6a62af44fd013545b644a008",
+  "AI 중점학교": "6a62afedfb99c80dbe7fdd79",
+  "적극행정": "6a62d3354ea9d954e498ab8c",
+  "적극행정 공무원 추천": "6a62d35dfd013545b644a6d1",
+  "학교폭력 불복절차": "6a61c7c968acf42eb95ededa",
+  "시험정보": "6a685dda6156d5756304f728",
+  "구인구직포털": "6a685e79fb99c80dbe81068e",
+  "교육공무직원 채용 안내": "6a61c67668acf42eb95edeb3",
+  "고등학교 전학 담당자": "6a6ae04495f722d77d962d0a",
+  "창원 중학교 전입학 담당자": "6a6ae1ca4ea9d954e49a82c5",
+  "창원 중학교 신입생 배정 담당자": "6a6ae2a14ea9d954e49a82db",
+  "검정고시 담당자": "6a702f88b11ba04bddedba9a",
+  "학원안내": "6a61aa1e4ea9d954e49817ef",
+  "평생교육시설": "6a6854f6bfeff424f85397c6"
+});
+
+// 카카오 블록 ID 추출
+// scenarios.json에 id가 없더라도 meta의 '블록 ID: ...'에서 찾아 사용합니다.
+// 유효한 ID를 찾지 못하면 block 액션을 쓰지 않고 message 방식으로 안전하게 되돌립니다.
+function getKakaoBlockId(block) {
+  if (!block) return '';
+  const directId = String(block.id || '').trim();
+  if (/^[0-9a-f]{24}$/i.test(directId)) return directId;
+
+  const meta = String(block.meta || '');
+  const m = meta.match(/블록\s*ID\s*:\s*([0-9a-f]{24})/i);
+  if (m && m[1]) return m[1];
+
+  const byTitle = KAKAO_BLOCK_ID_OVERRIDES[String(block.title || '').trim()] || '';
+  if (/^[0-9a-f]{24}$/i.test(byTitle)) return byTitle;
+
+  return '';
+}
+
+function makeKakaoQuickReply(block) {
+  const title = String((block && block.title) || '').trim();
+  const blockId = getKakaoBlockId(block);
+  const label = title.slice(0, 20);
+
+  if (blockId) {
+    return {
+      label,
+      action: 'block',
+      blockId,
+      messageText: title
+    };
+  }
+
+  return {
+    label,
+    action: 'message',
+    messageText: title
+  };
+}
+
 function kakaoFallbackResponse(utterance, blocks) {
   const cands = topCandidates(utterance, blocks, 3);
+  const quickReplies = cands
+    .map(c => makeKakaoQuickReply(blocks[c.idx]))
+    .filter(q => q.label);
+
+  quickReplies.push({ label: '☎ 콜센터 연결', action: 'message', messageText: '콜센터' });
+
   return {
     version: '2.0',
     template: {
       outputs: [{ simpleText: { text: '제가 질문을 정확히 확인하기 어려워요.\n조금 더 구체적으로 말씀해주시거나 아래 항목 중에서 골라주세요.' } }],
-      quickReplies: cands.map(c => ({
-        label: blocks[c.idx].title,
-        action: 'block',
-        blockId: blocks[c.idx].id,
-        messageText: blocks[c.idx].title
-      }))
-        .concat([{ label: '☎ 콜센터 연결', action: 'message', messageText: '콜센터' }])
-        .slice(0, 10)
+      quickReplies: quickReplies.slice(0, 10)
     }
   };
 }
 
 function kakaoAiResponse(text, candidates, blocks) {
   const safeText = (text || '').trim().slice(0, 950);
-  const quickReplies = candidates.slice(0, 3).map(c => ({
-    label: (blocks[c.idx].title || '').slice(0, 20),
-    action: 'block',
-    blockId: blocks[c.idx].id,
-    messageText: blocks[c.idx].title || ''
-  }));
+  const quickReplies = candidates
+    .slice(0, 3)
+    .map(c => makeKakaoQuickReply(blocks[c.idx]))
+    .filter(q => q.label);
+
   quickReplies.push({ label: '☎ 콜센터 연결', action: 'message', messageText: '콜센터' });
+
   return {
     version: '2.0',
     template: {
