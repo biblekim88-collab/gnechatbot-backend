@@ -768,6 +768,42 @@ function findBlockForKakaoReference(ref, blocks) {
   return result.matched && result.idx >= 0 ? blocks[result.idx] : null;
 }
 
+function needsTransferSchoolLevel(rawQuery) {
+  const q = compactText(expandQuery(rawQuery));
+  const isTransfer = /(전입학|전학|학교옮|거주지이전)/.test(q);
+  const hasSchoolLevel = /(고등학교|중학교|초등학교)/.test(q);
+  const specialTransfer = /(귀국|해외|외국|진로변경|특성화고|일반고|선배정|재배정)/.test(q);
+  return isTransfer && !hasSchoolLevel && !specialTransfer;
+}
+
+function kakaoTransferSchoolLevelResponse(blocks) {
+  const quickReplies = [];
+  const high = blocks.find(b => (b.title || '').trim() === '고등학교전입학');
+  const middle = blocks.find(b => (b.title || '').trim() === '초중학교전입학');
+
+  if (high) {
+    const q = makeKakaoQuickReply(high);
+    q.label = '고등학교 전입학';
+    quickReplies.push(q);
+  }
+  if (middle) {
+    const q = makeKakaoQuickReply(middle);
+    // 실제 연결 블록은 '초중학교전입학'이지만 이용자에게는 중학교 선택지로 표시
+    q.label = '중학교 전입학';
+    quickReplies.push(q);
+  }
+
+  quickReplies.push({ label: '☎ 콜센터 연결', action: 'message', messageText: '콜센터' });
+
+  return {
+    version: '2.0',
+    template: {
+      outputs: [{ simpleText: { text: '전학하려는 학생의 학교급을 선택해주세요.\n학교급에 따라 전입학 절차가 달라요.' } }],
+      quickReplies: quickReplies.slice(0, 10)
+    }
+  };
+}
+
 function buildBlockQuickReplies(block, blocks) {
   const out = [];
   (block.quick_replies || []).forEach(qr => {
@@ -805,30 +841,47 @@ function kakaoFallbackResponse(utterance, blocks, options = {}) {
   const failCount = Number(options.failCount || 0);
   const escalated = failCount >= FAIL_STREAK_ESCALATE_AT;
   const cands = topCandidates(utterance, blocks, 3);
-  const quickReplies = [];
 
-  // 두 번 이상 연속으로 못 알아들었을 때는 1:1 채팅상담을 가장 먼저 보여줍니다.
+  // 관련 후보는 카카오의 노란색 바로연결(quickReplies)로 표시합니다.
+  const quickReplies = cands
+    .map(c => makeKakaoQuickReply(blocks[c.idx]))
+    .filter(q => q.label);
+
+  // 안내/상담 연결은 예전 폴백 블록처럼 말풍선 안의 세로 버튼(textCard)으로 표시합니다.
+  const cardButtons = [
+    {
+      label: '☎경남교육콜센터 전화연결',
+      action: 'phone',
+      phoneNumber: '0552681004'
+    }
+  ];
+
+  // 2회 이상 연속으로 못 알아들었을 때만 1:1 채팅상담 버튼을 추가합니다.
   if (escalated) {
     const chatBlock = blocks.find(b => (b.title || '').trim() === '일대일 채팅 상담 안내');
-    if (chatBlock) {
-      const chatReply = makeKakaoQuickReply(chatBlock);
-      chatReply.label = '💬 1:1 채팅상담';
-      quickReplies.push(chatReply);
+    const chatBlockId = getKakaoBlockId(chatBlock);
+    if (chatBlockId) {
+      cardButtons.push({
+        label: '1:1 채팅상담',
+        action: 'block',
+        blockId: chatBlockId,
+        messageText: '1:1 채팅상담'
+      });
+    } else {
+      // 혹시 블록 ID를 찾지 못해도 스킬 전체가 깨지지 않도록 message 방식으로 안전하게 처리
+      cardButtons.push({
+        label: '1:1 채팅상담',
+        action: 'message',
+        messageText: '1:1 채팅상담'
+      });
     }
   }
 
-  cands
-    .map(c => makeKakaoQuickReply(blocks[c.idx]))
-    .filter(q => q.label)
-    .forEach(q => quickReplies.push(q));
-
-  quickReplies.push({ label: '☎ 콜센터 연결', action: 'message', messageText: '콜센터' });
-
   const text = escalated
-    ? '질문을 계속 정확히 확인하기 어려워요.\n아래 1:1 채팅상담을 이용하시거나, 관련 항목을 선택해주세요.'
-    : '제가 질문을 정확히 확인하기 어려워요.\n조금 더 구체적으로 말씀해주시거나 아래 항목 중에서 골라주세요.';
+    ? '제가 질문을 계속 정확히 이해하지 못했어요😥\n조금 더 구체적으로 말씀해주시거나 아래 관련 항목을 선택해주세요.\n\n💡궁금증이 해결되지 않았다면 1:1 채팅상담 또는 경남교육콜센터(055-268-1004)에 문의해주세요🤗'
+    : '제가 질문을 정확히 확인하기 어려워요😥\n조금 더 구체적으로 말씀해주시거나 아래 관련 항목 중에서 골라주세요.\n\n💡궁금증이 해결되지 않았다면 경남교육콜센터(055-268-1004)에 문의해주세요🤗';
 
-  // 혹시 같은 항목이 중복으로 들어온 경우 제거
+  // 혹시 후보가 중복된 경우 제거
   const seen = new Set();
   const deduped = quickReplies.filter(q => {
     const key = `${q.label}|${q.blockId || q.messageText || ''}`;
@@ -840,7 +893,12 @@ function kakaoFallbackResponse(utterance, blocks, options = {}) {
   return {
     version: '2.0',
     template: {
-      outputs: [{ simpleText: { text } }],
+      outputs: [{
+        textCard: {
+          text,
+          buttons: cardButtons.slice(0, 3)
+        }
+      }],
       quickReplies: deduped.slice(0, 10)
     }
   };
@@ -1001,6 +1059,14 @@ app.post('/api/kakao-skill', async (req, res) => {
   const blocks = getEffectiveUtterances();
 
   if (!utterance.trim()) return res.json(kakaoFallbackResponse('', blocks, { failCount: 0 }));
+
+  // 학교급을 말하지 않은 일반 전학 문의는 억지로 한 블록을 고르지 않고
+  // 고등학교/중학교 전입학 두 선택지를 함께 보여줍니다.
+  if (needsTransferSchoolLevel(utterance)) {
+    resetKakaoFailStreak(kakaoUserId);
+    trackQuery(utterance, '전입학 학교급 확인', true, 'kakao-clarify-transfer-level', 'kakao:' + kakaoUserId);
+    return res.json(kakaoTransferSchoolLevelResponse(blocks));
+  }
 
   // API 유무와 관계없이 먼저 안전한 규칙/대표질문/오타 매칭을 시도
   const match = smartMatch(utterance, blocks);
