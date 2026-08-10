@@ -1,4 +1,4 @@
-// 경남교육청 1004챗봇 백엔드 서버
+// 경남교육청 민원 챗봇 백엔드 서버
 // - 카카오톡 오픈빌더 폴백 스킬 응답
 // - 웹챗봇 로그 / 학습 API (모두가 공유하는 중앙 저장소)
 //
@@ -36,10 +36,22 @@ let SCENARIOS = readJson(SCENARIOS_PATH, { sections: [], blocks: [] });
 const BLOCKS = SCENARIOS.blocks;
 const FALLBACK_IDX = BLOCKS.findIndex(b => b.title === '질문 인식 불가 안내');
 
-// 학습된 표현을 매칭 대상에 실시간으로 합쳐서 사용
+// 학습된 표현 + 대표 자연어 질문을 매칭 대상에 실시간으로 합쳐서 사용
 function getEffectiveUtterances() {
   const learned = readJson(LEARNED_PATH, []);
-  const merged = BLOCKS.map(b => ({ ...b, utterances: [...b.utterances] }));
+  const merged = BLOCKS.map(b => ({ ...b, utterances: [...(b.utterances || [])] }));
+
+  merged.forEach(b => {
+    const extras = EXTRA_UTTERANCES[b.title] || [];
+    // 모든 블록에 안전한 기본 자연어 변형도 몇 개 추가
+    const auto = b.title && b.title !== '질문 인식 불가 안내'
+      ? [`${b.title} 알려줘`, `${b.title} 안내`, `${b.title} 궁금해`]
+      : [];
+    [...extras, ...auto].forEach(text => {
+      if (text && !b.utterances.includes(text)) b.utterances.push(text);
+    });
+  });
+
   learned.forEach(e => {
     if (merged[e.blockIdx] && !merged[e.blockIdx].utterances.includes(e.text)) {
       merged[e.blockIdx].utterances.push(e.text);
@@ -48,26 +60,109 @@ function getEffectiveUtterances() {
   return merged;
 }
 
-// ---- 동의어 사전 (웹버전과 동일 — 필요하면 여기서도 계속 늘리면 됨) ----
+// ---- 동의어 사전 / 대표질문 / 안전 매칭 규칙 ----
+const MATCH_POLICY = Object.freeze({
+  fuzzyMinimum: 0.64,
+  fuzzyStrong: 0.75,
+  fuzzyMargin: 0.05,
+  alternativeMinimum: 0.48
+});
+
 const SYNONYMS = {
-  '졸업장':'졸업증명서', '생기부':'생활기록부', '성적표':'성적증명서',
-  '재적':'제적증명서', '정원외':'정원외관리증명서', '퇴직증명':'퇴직증명원',
-  '영문성적표':'영문증명서', '영문졸업장':'영문증명서',
-  '전학':'전입학', '이사':'거주지 이전 전입학', '학교옮':'전입학',
-  '고등학생':'고등학교', '고등생':'고등학교', '중학생':'중학교', '초등학생':'초등학교',
-  '배정':'재배정', '재배정계획':'재배정',
-  '수능접수':'수능원서접수', '수능원서':'수능원서접수',
-  '꿈디딤':'꿈디딤카드', '다자녀':'다자녀카드사업안내',
-  '채용':'교육공무직원 채용 안내', '공무직채용':'교육공무직원 채용 안내',
-  '학원등록':'학원안내', '교습소':'학원안내',
+  '졸업장':'졸업증명서', '졸업증명':'졸업증명서', '생기부':'생활기록부', '학교생활기록부':'생활기록부',
+  '성적표':'성적증명서', '재적':'제적증명서', '정원외':'정원외관리증명서', '퇴직증명':'퇴직증명원',
+  '영문성적표':'영문증명서', '영문졸업장':'영문증명서', '영어증명서':'영문증명서',
+  '전학':'전입학', '학교옮기':'전입학', '학교옮':'전입학', '전학가':'전입학', '이사':'거주지 이전 전입학',
+  '고등학생':'고등학교', '고등생':'고등학교', '고딩':'고등학교', '중학생':'중학교', '중딩':'중학교', '초등학생':'초등학교',
+  '배정':'재배정', '재배정계획':'재배정', '선배정계획':'선배정',
+  '수능접수':'수능원서접수', '수능원서':'수능원서접수', '수능 신청':'수능원서접수',
+  '꿈디딤':'꿈디딤카드', '꿈디딤포인트':'꿈디딤카드 포인트', '다자녀':'다자녀카드사업안내', '입학지원금':'다자녀카드사업안내',
+  '채용':'교육공무직원 채용 안내', '공무직채용':'교육공무직원 채용 안내', '교육공무직':'교육공무직원',
+  '학원등록':'학원안내', '교습소':'학원안내', '개인과외':'학원안내',
   '팩스':'팩스민원', '신문고':'국민신문고', '정보공개':'정보공개청구',
-  '아이북':'아이톡톡아이북', '자격증재교부':'교원자격증 재교부',
-  '검고':'검정고시'
+  '아이북':'아이톡톡아이북', '아이북수리':'아이톡톡아이북', '자격증재교부':'교원자격증 재교부',
+  '검고':'검정고시', '검정고사':'검정고시', '검정고ㅅㅣ':'검정고시', '검정고씨':'검정고시',
+  '학폭':'학교폭력', '스승찾기':'선생님찾기', '은사찾기':'선생님찾기'
 };
+
+// 대표 자연어 질문. 기존 시나리오 내용을 벗어난 답을 만들지는 않고, 질문을 올바른 블록으로 연결하는 용도입니다.
+const EXTRA_UTTERANCES = Object.freeze({
+  '제증명 종합 안내': ['증명서 어디서 떼요','교육청 증명서 발급하고 싶어요','증명서 발급 방법 알려줘','학교 증명서 어떻게 발급해요'],
+  '졸업증명서': ['졸업증명서 어디서 발급해요','졸업장 다시 떼고 싶어요','학교 졸업증명서 뽑는 법','졸업증명서 온라인 발급'],
+  '재학증명서': ['재학증명서 떼고 싶어요','재학증명서 어디서 발급해요','학교 다니는 증명서 필요해요'],
+  '생활기록부': ['생기부 발급하고 싶어요','생활기록부 어디서 떼요','학교생활기록부 발급 방법','예전 생기부 발급'],
+  '성적증명서': ['성적표 발급하고 싶어요','성적증명서 어디서 떼요','학교 성적증명서 발급'],
+  '제적증명서': ['제적증명서 발급하려면','학교 제적증명서 어디서 떼요'],
+  '정원외관리증명서': ['정원외관리증명서 어디서 발급해요','정원외 관리 증명 필요해요'],
+  '경력증명서': ['교직원 경력증명서 발급','기간제 경력증명서 떼고 싶어요','학교 근무 경력증명서'],
+  '퇴직증명원': ['퇴직증명원 어디서 발급해요','교직원 퇴직증명 필요해요'],
+  '개명 후 제증명 발급': ['개명했는데 생활기록부 이름 바꾸고 싶어요','개명 후 졸업증명서 이름 변경','이름 바꿨는데 생기부 정정','개명하고 학교 기록 정정'],
+  '제증명 구비서류': ['증명서 발급할 때 뭐 가져가요','대리인이 증명서 떼려면 서류 뭐 필요해요','제증명 방문 준비물'],
+  '영문증명서': ['영문 졸업증명서 발급','영문 성적증명서 필요해요','영어로 증명서 떼고 싶어요','아포스티유 증명서'],
+  '검정고시 관련 제증명': ['검정고시 합격증명서 발급','검정고시 성적증명서 발급','검정고시 합격증 어디서 떼요','검정고시 성적표 발급'],
+  '검정고시개명': ['검정고시 합격 후 개명했어요','개명했는데 검정고시 합격증 이름 바꾸고 싶어요'],
+  '팩스민원': ['팩스로 증명서 신청하고 싶어요','가까운 주민센터에서 팩스민원 돼요','팩스민원 어떻게 해요'],
+  '정보공개청구': ['교육청 정보공개 신청하고 싶어요','정보공개 어디서 청구해요','자료 정보공개청구 방법'],
+  '국민신문고': ['교육청에 민원 넣고 싶어요','온라인으로 민원 접수 어디서 해요','국민신문고 민원 신청'],
+  '교원자격증 재교부': ['교원자격증 잃어버렸어요','교원자격증 다시 발급받고 싶어요','교원자격증 재발급'],
+  '수능 원서접수': ['수능 원서 어디서 접수해요','수능 접수하려면 어떻게 해요','수능 원서 접수 장소','졸업생 수능 접수'],
+  '수능 원서접수 기간': ['수능 접수 언제예요','수능 원서접수 기간 알려줘','수능 원서 언제까지 내요'],
+  '꿈디딤카드 종합 안내': ['꿈디딤카드가 뭐예요','꿈디딤카드 지원금 알려줘','꿈디딤카드 어떻게 써요','직업계고 취업준비지원금'],
+  '꿈디딤카드 재사용재발급': ['꿈디딤카드 잃어버렸어요','꿈디딤카드 재발급 받고 싶어요','카드 분실했어요 꿈디딤'],
+  '꿈디딤카드 결제오류': ['꿈디딤카드 결제가 안돼요','꿈디딤카드 카드 결제 오류','꿈디딤카드 사용이 안돼요'],
+  '꿈디딤카드 미지급': ['꿈디딤 포인트가 안 들어왔어요','꿈디딤카드 포인트 미지급','지원금 아직 안 들어왔어요 꿈디딤'],
+  '꿈디딤카드 잔액 확인': ['꿈디딤카드 잔액 얼마 남았어요','꿈디딤 포인트 잔액 확인','꿈디딤 남은 금액'],
+  '고등학교전입학': ['창원 살다가 진주로 이사했는데 고등학생 전학하고 싶어요','고등학생 아이가 이사해서 학교를 옮기고 싶어요','고등학교 전학 절차 알려줘','다른 지역으로 이사해서 고등학교 전학'],
+  '고등학교전입학제출서류': ['고등학교 전학할 때 서류 뭐 필요해요','고등학교 전입학 준비서류','고등학생 전학 제출서류 알려줘'],
+  '초중학교전입학': ['중학생인데 이사해서 전학가고 싶어요','초등학생 전학 절차 알려줘','중학교 전학 어떻게 해요','초등학교 이사 전학'],
+  '진로변경 전입학': ['특성화고에서 일반고로 옮기고 싶어요','일반고에서 특성화고 전학 가능한가요','진로변경 전입학 어떻게 해요'],
+  '고등학교 귀국자 편입학': ['외국에서 살다 와서 고등학교 들어가려면','해외 학교 다니다 귀국했는데 고등학교 편입','귀국학생 고등학교 편입학'],
+  '입학 전 선배정': ['고등학교 입학 전에 선배정 받고 싶어요','이사 예정인데 고등학교 선배정 가능해요','평준화지역 선배정'],
+  '타 학군 재배정': ['고등학교 배정받고 다른 지역으로 이사했어요','타 학군으로 이사해서 재배정 받고 싶어요','입학 전 이사 재배정'],
+  '검정고시 종합 안내': ['검정고시 어떻게 봐요','검정고시 처음인데 알려줘','검정고시 전체 안내','검고 정보 알려줘'],
+  '2026년 제2회 검정고시': ['검정고시 접수 언제예요','검정고시 원서 어디서 접수해요','이번 검정고시 시험 일정','2026년 검정고시 접수'],
+  '검정고시 자주 묻는 질문': ['검정고시 대리접수 가능한가요','검정고시 시험장 몇 시까지 가요','검정고시 시험 볼 때 자주 묻는 질문','검정고시 유의사항'],
+  '검정고시 제출서류': ['검정고시 접수할 때 서류 뭐 필요해요','검정고시 준비물 서류','검정고시 원서접수 제출서류'],
+  '검정고시 담당자': ['검정고시 담당자 전화번호','검정고시 문의 전화 어디예요','검고 담당자 연결'],
+  '고등학교 전학 담당자': ['고등학교 전학 담당자 전화번호','고등학교 전입학 어디에 전화해요','전학 문의 담당자'],
+  '창원 중학교 전입학 담당자': ['창원 중학교 전학 담당자 번호','창원에서 중학교 전학 문의 어디로 해요'],
+  '창원 중학교 신입생 배정 담당자': ['창원 중학교 배정 담당자 전화번호','창원 중학교 신입생 배정 문의'],
+  '교육급여': ['교육급여 신청하고 싶어요','교육급여 어떻게 신청해요','학생 교육급여 문의'],
+  '다자녀카드사업안내': ['다자녀 입학지원금 어떻게 받아요','다자녀카드 지원금 알려줘','다자녀 학생 교육비 지원','다자녀 입학준비물품 구입비'],
+  '다자녀카드사용처안내': ['다자녀카드 어디서 쓸 수 있어요','다자녀 포인트 사용처','다자녀카드 가맹점 알려줘'],
+  '학교폭력 불복절차': ['학교폭력 결과에 이의가 있어요','학폭 처분 불복하려면','학교폭력 행정심판 어떻게 해요'],
+  '교육공무직원 채용 안내': ['교육공무직 채용시험 알려줘','학교 공무직 채용 어디서 봐요','교육공무직원 채용 공고'],
+  '구인구직포털': ['학교 채용공고 어디서 봐요','교육청 구인구직','기간제 채용 공고 찾고 싶어요'],
+  '시험정보': ['교육청 시험 공고 어디서 봐요','임용시험 정보 알려줘','채용시험 일정'],
+  '학원안내': ['학원 등록하려면 어떻게 해요','교습소 신고하려면','개인과외 신고 어디서 해요','학원 관련 문의'],
+  '평생교육시설': ['평생교육시설 현황 알려줘','경남 평생교육시설 어디 있어요'],
+  '스승찾기': ['예전 선생님 찾고 싶어요','은사님 연락처 찾을 수 있나요','스승찾기 신청'],
+  '아이톡톡아이북': ['아이북 고장났어요','아이북 수리 어디서 해요','아이북 AS 받고 싶어요','학생 아이북 문의'],
+  '경남교육청 위치': ['경남교육청 어디 있어요','교육청 주소 알려줘','경상남도교육청 가는 길'],
+  '청사 배치': ['교육청 부서 위치 알려줘','교육청 사무실 어디 있어요','청사 배치도'],
+  '학교찾기': ['학교 주소 찾고 싶어요','경남 학교 검색','유치원 어디 있는지 찾고 싶어요'],
+  '학교시설 예약': ['학교 운동장 빌리고 싶어요','학교 강당 대여 가능한가요','학교시설 예약 방법'],
+  '학교시설 사용료': ['학교시설 빌리면 얼마예요','학교 강당 사용료','학교시설 대관 비용'],
+  '교육지원청 안내': ['지역 교육지원청 연락처','교육지원청 어디로 문의해요','경남 교육지원청 안내'],
+  '학사일정': ['학교 개학 언제예요','입학식 날짜 궁금해요','졸업식 일정'],
+  '교권 심리상담': ['교사 심리상담 받고 싶어요','교권 침해로 상담 필요해요','선생님 심리 지원'],
+  '유아학비': ['유치원 유아학비 지원','유아학비 얼마나 지원돼요','유아학비 대상'],
+  '유아학비 신청 및 지급방법': ['유아학비 어디서 신청해요','유아학비 지급 언제 돼요','유아학비 신청 방법'],
+  '특수교육대상자 선정배치': ['특수교육대상자 선정 절차','특수교육 배치 변경하고 싶어요','특수교육대상자 배치 문의'],
+  '사립유치원 무상교육': ['사립유치원 무상교육 지원','사립유치원 학비 무료인가요'],
+  '교육환경보호구역': ['교육환경보호구역 확인하고 싶어요','학교 주변 보호구역 조회'],
+  '학교안전공제회': ['학교에서 다쳤는데 보상받을 수 있나요','학교안전사고 공제','학교안전공제회 문의']
+});
+
+function compactText(s) {
+  return (s || '').toLowerCase().replace(/[\s·ㆍ,./#!$%^&*;:{}=\-_`~()'"?<>[\]…~～]/g, '');
+}
+
 function expandQuery(q) {
+  q = (q || '').toLowerCase();
   let extra = '';
   Object.keys(SYNONYMS).forEach(k => { if (q.includes(k)) extra += ' ' + SYNONYMS[k]; });
-  return q + extra;
+  return `${q} ${extra}`.trim();
 }
 
 // ---- 한글 자모 분해 (오타 대응) ----
@@ -76,7 +171,7 @@ const JUNG = ['ㅏ','ㅐ','ㅑ','ㅒ','ㅓ','ㅔ','ㅕ','ㅖ','ㅗ','ㅘ','ㅙ',
 const JONG = ['','ㄱ','ㄲ','ㄳ','ㄴ','ㄵ','ㄶ','ㄷ','ㄹ','ㄺ','ㄻ','ㄼ','ㄽ','ㄾ','ㄿ','ㅀ','ㅁ','ㅂ','ㅄ','ㅅ','ㅆ','ㅇ','ㅈ','ㅊ','ㅋ','ㅌ','ㅍ','ㅎ'];
 function decomposeHangul(s) {
   let out = '';
-  for (const ch of s) {
+  for (const ch of (s || '')) {
     const code = ch.codePointAt(0);
     if (code >= 0xAC00 && code <= 0xD7A3) {
       const si = code - 0xAC00;
@@ -86,14 +181,14 @@ function decomposeHangul(s) {
   return out;
 }
 function bigrams(s) {
-  s = s.replace(/\s+/g,'');
+  s = (s || '').replace(/\s+/g,'');
   const m = new Map();
   for (let i=0;i<s.length-1;i++){ const g=s.substr(i,2); m.set(g,(m.get(g)||0)+1); }
   return m;
 }
 function dice(a,b) {
-  const da = decomposeHangul(a.replace(/\s+/g,''));
-  const db = decomposeHangul(b.replace(/\s+/g,''));
+  const da = decomposeHangul((a || '').replace(/\s+/g,''));
+  const db = decomposeHangul((b || '').replace(/\s+/g,''));
   const A = bigrams(da), B = bigrams(db);
   if (A.size===0 || B.size===0) return da===db ? 1 : 0;
   let overlap=0, totalA=0, totalB=0;
@@ -102,38 +197,189 @@ function dice(a,b) {
   return (2*overlap)/(totalA+totalB);
 }
 function containScore(q,u) {
-  q=q.replace(/\s+/g,''); u=u.replace(/\s+/g,'');
+  q=(q||'').replace(/\s+/g,''); u=(u||'').replace(/\s+/g,'');
   if (!q||!u) return 0;
   const shorter = q.length <= u.length ? q : u;
   const longer = q.length <= u.length ? u : q;
-  if (shorter.length < 3) return 0; // 너무 짧은 조각(1~2자)은 우연히 겹치기 쉬워서 포함매칭 보너스 제외
+  if (shorter.length < 3) return 0;
   if (longer.includes(shorter)) return 0.55 + 0.25*(shorter.length/longer.length);
   return 0;
 }
 function scoreAgainst(query, target) {
   return Math.max(dice(query,target), containScore(query,target));
 }
-function findBestBlock(rawQuery, blocks) {
-  const query = expandQuery(rawQuery);
-  let best = { idx: -1, score: 0 };
-  blocks.forEach((b,i) => {
-    let s = scoreAgainst(query, b.title) * 0.9;
-    b.utterances.forEach(u => { s = Math.max(s, scoreAgainst(query, u)); });
-    if (s > best.score) best = { idx: i, score: s };
-  });
-  return best;
-}
-function topCandidates(rawQuery, blocks, n) {
-  const query = expandQuery(rawQuery);
-  const scored = blocks.map((b,i) => {
-    let s = scoreAgainst(query, b.title) * 0.9;
-    b.utterances.forEach(u => { s = Math.max(s, scoreAgainst(query, u)); });
-    return { idx:i, score:s };
-  });
-  scored.sort((a,b)=>b.score-a.score);
-  return scored.slice(0,n).filter(c=>c.score>0.12);
+
+const EXACT_QUERY_ROUTES = Object.freeze({
+  '제증명':'제증명 종합 안내','제증명안내':'제증명 종합 안내','제증명발급':'제증명 종합 안내','증명서':'제증명 종합 안내','증명서발급':'제증명 종합 안내',
+  '검정고시':'검정고시 종합 안내','검정고시안내':'검정고시 종합 안내','검고':'검정고시 종합 안내','검정고사':'검정고시 종합 안내',
+  '꿈디딤':'꿈디딤카드 종합 안내','꿈디딤카드':'꿈디딤카드 종합 안내','다자녀':'다자녀카드사업안내','다자녀지원':'다자녀카드사업안내',
+  '수능':'수능 원서접수','수능접수':'수능 원서접수','학원':'학원안내','학원교습소':'학원안내','교습소':'학원안내',
+  '정보공개':'정보공개청구','팩스':'팩스민원','팩스민원':'팩스민원','스승찾기':'스승찾기','아이북':'아이톡톡아이북','학폭':'학교폭력 불복절차'
+});
+
+function titleIndexMap(blocks) {
+  const map = new Map();
+  blocks.forEach((b,i) => map.set((b.title || '').trim(), i));
+  return map;
 }
 
+function routeByTitle(title, blocks, reason='rule') {
+  const idx = titleIndexMap(blocks).get(title);
+  return idx == null ? null : { matched:true, idx, score:1, reason, candidates:[{idx,score:1}] };
+}
+
+function intentRoute(rawQuery, blocks) {
+  const q = compactText(expandQuery(rawQuery));
+  const has = (...xs) => xs.some(x => q.includes(compactText(x)));
+  const all = (...xs) => xs.every(x => q.includes(compactText(x)));
+
+  // 검정고시: 세부 목적을 먼저 판별하고, 단순 '검정고시'는 종합안내
+  if (has('검정고시')) {
+    if (has('담당자','전화번호','연락처','전화')) return routeByTitle('검정고시 담당자', blocks, 'intent');
+    if (has('개명','이름변경','이름정정')) return routeByTitle('검정고시개명', blocks, 'intent');
+    if (has('합격증명','성적증명','합격증','성적표','제증명')) return routeByTitle('검정고시 관련 제증명', blocks, 'intent');
+    if (has('제출서류','준비서류','서류뭐','구비서류','준비물')) return routeByTitle('검정고시 제출서류', blocks, 'intent');
+    if (has('대리접수','입실','유의사항','자주묻','질문')) return routeByTitle('검정고시 자주 묻는 질문', blocks, 'intent');
+    if (has('접수','원서','시험일','시험장','시험일정','수험표','이번시험','2026년')) return routeByTitle('2026년 제2회 검정고시', blocks, 'intent');
+    if (q.length <= 18 || has('안내','알려','어떻게봐','처음')) return routeByTitle('검정고시 종합 안내', blocks, 'intent');
+  }
+
+  // 전입학: 학교급/특수유형/서류/담당자를 분리
+  const transfer = has('전입학','전학','학교옮','거주지이전');
+  if (transfer) {
+    if (has('귀국','해외','외국')) return routeByTitle('고등학교 귀국자 편입학', blocks, 'intent');
+    if (has('진로변경','특성화고','일반고에서특성화','특성화고에서일반')) return routeByTitle('진로변경 전입학', blocks, 'intent');
+    if (has('창원') && has('중학교') && has('담당자','전화','번호','연락처')) return routeByTitle('창원 중학교 전입학 담당자', blocks, 'intent');
+    if (has('고등학교') && has('담당자','전화','번호','연락처')) return routeByTitle('고등학교 전학 담당자', blocks, 'intent');
+    if (has('고등학교') && has('서류','제출서류','준비물','구비서류')) return routeByTitle('고등학교전입학제출서류', blocks, 'intent');
+    if (has('초등학교','중학교')) return routeByTitle('초중학교전입학', blocks, 'intent');
+    if (has('고등학교')) return routeByTitle('고등학교전입학', blocks, 'intent');
+  }
+
+  // 고입 선배정/재배정
+  if (has('선배정')) return routeByTitle('입학 전 선배정', blocks, 'intent');
+  if (has('재배정') && has('이사','타학군','학군')) return routeByTitle('타 학군 재배정', blocks, 'intent');
+
+  // 꿈디딤
+  if (has('꿈디딤')) {
+    if (has('분실','잃어버','재발급','재사용')) return routeByTitle('꿈디딤카드 재사용재발급', blocks, 'intent');
+    if (has('결제오류','결제안','사용안','결제가안')) return routeByTitle('꿈디딤카드 결제오류', blocks, 'intent');
+    if (has('미지급','안들어','지급안','포인트안')) return routeByTitle('꿈디딤카드 미지급', blocks, 'intent');
+    if (has('잔액','남은금액','얼마남')) return routeByTitle('꿈디딤카드 잔액 확인', blocks, 'intent');
+    return routeByTitle('꿈디딤카드 종합 안내', blocks, 'intent');
+  }
+
+  // 다자녀
+  if (has('다자녀','입학지원금')) {
+    if (has('사용처','가맹점','어디서써','쓸수')) return routeByTitle('다자녀카드사용처안내', blocks, 'intent');
+    return routeByTitle('다자녀카드사업안내', blocks, 'intent');
+  }
+
+  // 수능
+  if (has('수능')) {
+    if (has('기간','언제','마감','접수일')) return routeByTitle('수능 원서접수 기간', blocks, 'intent');
+    return routeByTitle('수능 원서접수', blocks, 'intent');
+  }
+
+  // 제증명 세부
+  if (has('생기부','생활기록부')) {
+    if (has('개명','이름바','정정')) return routeByTitle('개명 후 제증명 발급', blocks, 'intent');
+    return routeByTitle('생활기록부', blocks, 'intent');
+  }
+  if (has('졸업증명서','졸업장')) return routeByTitle('졸업증명서', blocks, 'intent');
+  if (has('재학증명서')) return routeByTitle('재학증명서', blocks, 'intent');
+  if (has('성적증명서','성적표')) return routeByTitle('성적증명서', blocks, 'intent');
+  if (has('제적증명서')) return routeByTitle('제적증명서', blocks, 'intent');
+  if (has('정원외관리')) return routeByTitle('정원외관리증명서', blocks, 'intent');
+  if (has('경력증명서')) return routeByTitle('경력증명서', blocks, 'intent');
+  if (has('퇴직증명')) return routeByTitle('퇴직증명원', blocks, 'intent');
+  if (has('영문증명','영문졸업','영문성적','아포스티유')) return routeByTitle('영문증명서', blocks, 'intent');
+  if (has('제증명','증명서발급') && has('구비서류','준비물','뭐가져')) return routeByTitle('제증명 구비서류', blocks, 'intent');
+
+  // 기타 빈도가 높은 업무
+  if (has('학교폭력','학폭') && has('불복','이의','행정심판')) return routeByTitle('학교폭력 불복절차', blocks, 'intent');
+  if (has('교육공무직','공무직') && has('채용','시험','공고')) return routeByTitle('교육공무직원 채용 안내', blocks, 'intent');
+  if (has('아이북') && has('고장','수리','as','에이에스')) return routeByTitle('아이톡톡아이북', blocks, 'intent');
+  if (has('스승','선생님','은사') && has('찾')) return routeByTitle('스승찾기', blocks, 'intent');
+  if (has('학원','교습소','개인과외')) return routeByTitle('학원안내', blocks, 'intent');
+  if (has('정보공개')) return routeByTitle('정보공개청구', blocks, 'intent');
+  if (has('국민신문고','온라인민원','고충민원')) return routeByTitle('국민신문고', blocks, 'intent');
+  if (has('팩스민원')) return routeByTitle('팩스민원', blocks, 'intent');
+  if (has('교육급여')) return routeByTitle('교육급여', blocks, 'intent');
+
+  return null;
+}
+
+function domainLockIndices(rawQuery, blocks) {
+  const q = compactText(expandQuery(rawQuery));
+  const titles = new Set();
+  const addIf = pred => blocks.forEach((b,i) => { if (pred(b.title || '')) titles.add(i); });
+
+  if (q.includes('검정고시')) addIf(t => t.includes('검정고시'));
+  else if (/(꿈디딤)/.test(q)) addIf(t => t.includes('꿈디딤'));
+  else if (/(다자녀|입학지원금)/.test(q)) addIf(t => t.includes('다자녀'));
+  else if (/(수능)/.test(q)) addIf(t => t.includes('수능') || t.includes('대입정보'));
+  else if (/(전입학|전학|학교옮|거주지이전)/.test(q)) addIf(t => t.includes('전입학') || t.includes('전학') || t.includes('재배정') || t.includes('선배정') || t.includes('귀국자'));
+  else if (/(학원|교습소|개인과외)/.test(q)) addIf(t => t.includes('학원') || t.includes('평생교육시설'));
+  else if (/(학교폭력|학폭)/.test(q)) addIf(t => t.includes('학교폭력'));
+
+  return titles.size ? titles : null;
+}
+
+function fuzzyCandidates(rawQuery, blocks, n=5) {
+  const query = expandQuery(rawQuery);
+  const lock = domainLockIndices(rawQuery, blocks);
+  const scored = blocks.map((b,i) => {
+    if (i === FALLBACK_IDX) return {idx:i, score:0};
+    if (lock && !lock.has(i)) return {idx:i, score:0};
+    let s = scoreAgainst(query, b.title || '') * 0.90;
+    (b.utterances || []).forEach(u => { s = Math.max(s, scoreAgainst(query, u)); });
+    return {idx:i, score:s};
+  }).filter(x => x.score > 0).sort((a,b)=>b.score-a.score);
+  return scored.slice(0,n);
+}
+
+function smartMatch(rawQuery, blocks) {
+  const raw = (rawQuery || '').trim();
+  if (!raw) return {matched:false, idx:-1, score:0, reason:'empty', candidates:[]};
+
+  const compact = compactText(raw);
+  const exactTitle = EXACT_QUERY_ROUTES[compact];
+  if (exactTitle) {
+    const routed = routeByTitle(exactTitle, blocks, 'exact-route');
+    if (routed) return routed;
+  }
+
+  // 제목/대표발화 완전일치
+  for (let i=0;i<blocks.length;i++) {
+    if (i === FALLBACK_IDX) continue;
+    const b = blocks[i];
+    if (compact === compactText(b.title)) return {matched:true, idx:i, score:1, reason:'exact-title', candidates:[{idx:i,score:1}]};
+    if ((b.utterances || []).some(u => compact === compactText(u))) return {matched:true, idx:i, score:1, reason:'exact-utterance', candidates:[{idx:i,score:1}]};
+  }
+
+  const intent = intentRoute(raw, blocks);
+  if (intent) return intent;
+
+  const candidates = fuzzyCandidates(raw, blocks, 5);
+  const best = candidates[0] || {idx:-1,score:0};
+  const second = candidates[1] || {idx:-1,score:0};
+  const margin = best.score - second.score;
+  const strong = best.score >= MATCH_POLICY.fuzzyStrong;
+  const safe = best.score >= MATCH_POLICY.fuzzyMinimum && (strong || margin >= MATCH_POLICY.fuzzyMargin);
+  return { matched:safe, idx:best.idx, score:best.score, secondScore:second.score, margin, reason:safe?'fuzzy-safe':'ambiguous', candidates };
+}
+
+function findBestBlock(rawQuery, blocks) {
+  const r = smartMatch(rawQuery, blocks);
+  return { idx:r.idx, score:r.score, reason:r.reason, matched:r.matched };
+}
+
+function topCandidates(rawQuery, blocks, n) {
+  const r = smartMatch(rawQuery, blocks);
+  if (r.candidates && r.candidates.length) return r.candidates.slice(0,n).filter(c => c.score >= MATCH_POLICY.alternativeMinimum || r.reason === 'intent' || r.reason === 'exact-route');
+  return fuzzyCandidates(rawQuery, blocks, n).filter(c => c.score >= MATCH_POLICY.alternativeMinimum);
+}
 
 // ============ 생성형 AI 폴백용 검색 / 대화 메모리 ============
 // Render 환경변수에 ANTHROPIC_API_KEY, ANTHROPIC_MODEL을 설정하면 활성화됩니다.
@@ -448,6 +694,84 @@ function makeKakaoQuickReply(block) {
   };
 }
 
+const LEGACY_BLOCK_REFERENCE_ALIASES = Object.freeze({
+  '경남교육청위치':'경남교육청 위치',
+  '제증명 발급':'제증명 종합 안내',
+  '검정고시':'검정고시 종합 안내',
+  '수능원서접수':'수능 원서접수',
+  '수능원서접수 - 사본 (1)':'수능 원서접수 기간',
+  '꿈디딤카드':'꿈디딤카드 종합 안내',
+  '일대일요청시':'일대일 채팅 상담 안내',
+  '검정고시합격성적':'검정고시 관련 제증명',
+  '꿈디딤결제오류':'꿈디딤카드 결제오류',
+  '꿈디딤미지급':'꿈디딤카드 미지급',
+  '꿈디딤재사용재발급':'꿈디딤카드 재사용재발급',
+  '꿈디딤잔액확인':'꿈디딤카드 잔액 확인',
+  '청사배치도':'청사 배치',
+  '민원실위치':'민원실 이용 안내',
+  '학교시설사용료':'학교시설 사용료',
+  '검정고시 - 사본 (1)':'2026년 제2회 검정고시',
+  '검정고시자주묻는질문':'검정고시 자주 묻는 질문',
+  '검정고시제출서류':'검정고시 제출서류',
+  '정원외관리증명서초중':'정원외관리증명서'
+});
+
+function findBlockForKakaoReference(ref, blocks) {
+  const text = String(ref || '').trim();
+  if (!text) return null;
+  // value 안에 [24자리 블록ID]가 있는 경우 최우선
+  const idMatch = text.match(/\[([0-9a-f]{24})\]/i);
+  if (idMatch) {
+    const byId = blocks.find(b => getKakaoBlockId(b).toLowerCase() === idMatch[1].toLowerCase());
+    if (byId) return byId;
+  }
+  const clean = text.replace(/\s*\[[^\]]+\]\s*$/, '').trim();
+  const aliasTitle = LEGACY_BLOCK_REFERENCE_ALIASES[clean];
+  if (aliasTitle) {
+    const aliasBlock = blocks.find(b => (b.title || '').trim() === aliasTitle);
+    if (aliasBlock) return aliasBlock;
+  }
+  const direct = blocks.find(b => (b.title || '').trim() === clean || compactText(b.title || '') === compactText(clean));
+  if (direct) return direct;
+  const routedTitle = EXACT_QUERY_ROUTES[compactText(clean)];
+  if (routedTitle) return blocks.find(b => (b.title || '').trim() === routedTitle) || null;
+  const result = smartMatch(clean, blocks);
+  return result.matched && result.idx >= 0 ? blocks[result.idx] : null;
+}
+
+function buildBlockQuickReplies(block, blocks) {
+  const out = [];
+  (block.quick_replies || []).forEach(qr => {
+    // 이용자에게 보이는 label이 현재 title과 더 잘 맞는 경우가 많아 label을 먼저 확인
+    const target = findBlockForKakaoReference(qr.label, blocks) || findBlockForKakaoReference(qr.block, blocks);
+    if (target) {
+      const item = makeKakaoQuickReply(target);
+      item.label = String(qr.label || target.title || '').slice(0,20);
+      out.push(item);
+    } else if (qr.label) {
+      out.push({ label:String(qr.label).slice(0,20), action:'message', messageText:qr.label });
+    }
+  });
+  (block.responses || []).forEach(r => (r.buttons || []).forEach(b => {
+    if (b.type !== 'block') return;
+    const target = findBlockForKakaoReference(b.value, blocks) || findBlockForKakaoReference(b.label, blocks);
+    if (target) {
+      const item = makeKakaoQuickReply(target);
+      item.label = String(b.label || target.title || '').slice(0,20);
+      out.push(item);
+    } else if (b.label) {
+      out.push({ label:String(b.label).slice(0,20), action:'message', messageText:b.label });
+    }
+  }));
+  // 중복 제거
+  const seen = new Set();
+  return out.filter(x => {
+    const key = `${x.label}|${x.blockId || x.messageText || ''}`;
+    if (seen.has(key)) return false;
+    seen.add(key); return true;
+  }).slice(0,10);
+}
+
 function kakaoFallbackResponse(utterance, blocks) {
   const cands = topCandidates(utterance, blocks, 3);
   const quickReplies = cands
@@ -582,12 +906,18 @@ app.get('/api/learned', (req, res) => {
 app.post('/api/match', (req, res) => {
   const query = (req.body && req.body.query) || '';
   const blocks = getEffectiveUtterances();
-  const best = findBestBlock(query, blocks);
-  if (best.idx === -1 || best.score < 0.30) {
-    logMissed(query, best.idx>=0 ? blocks[best.idx].title : '', best.score);
-    return res.json({ matched: false, fallback: BLOCKS[FALLBACK_IDX], candidates: topCandidates(query, blocks, 3).map(c=>({title:blocks[c.idx].title, idx:c.idx})) });
+  const result = smartMatch(query, blocks);
+  if (!result.matched || result.idx < 0) {
+    const best = result.candidates && result.candidates[0];
+    logMissed(query, best ? blocks[best.idx].title : '', best ? best.score : 0);
+    return res.json({
+      matched: false,
+      reason: result.reason,
+      fallback: BLOCKS[FALLBACK_IDX],
+      candidates: (result.candidates || []).slice(0,3).map(c=>({title:blocks[c.idx].title, idx:c.idx, score:Number(c.score.toFixed(2))}))
+    });
   }
-  res.json({ matched: true, idx: best.idx, score: best.score, block: BLOCKS[best.idx] });
+  res.json({ matched: true, idx: result.idx, score: result.score, reason: result.reason, block: BLOCKS[result.idx] });
 });
 
 // 놓친 질문 기록만 남기고 싶을 때 (웹챗봇의 LOG_WEBHOOK_URL 로 연결)
@@ -612,16 +942,17 @@ app.post('/api/kakao-skill', async (req, res) => {
   const utterance = (req.body && req.body.userRequest && req.body.userRequest.utterance) || '';
   const kakaoUserId = (req.body && req.body.userRequest && req.body.userRequest.user && req.body.userRequest.user.id) || '';
   const blocks = getEffectiveUtterances();
-  const best = findBestBlock(utterance, blocks);
 
   if (!utterance.trim()) return res.json(kakaoFallbackResponse('', blocks));
 
-  // 명확한 짧은 질문은 기존 시나리오 답변을 그대로 사용
-  if (isClearDirectMatch(utterance, best, blocks)) {
-    trackQuery(utterance, blocks[best.idx].title, true, 'kakao-direct', 'kakao:' + kakaoUserId);
-    const block = blocks[best.idx];
+  // API 유무와 관계없이 먼저 안전한 규칙/대표질문/오타 매칭을 시도
+  const match = smartMatch(utterance, blocks);
+  if (match.matched && match.idx >= 0) {
+    const block = blocks[match.idx];
+    trackQuery(utterance, block.title, true, 'kakao-smart-' + match.reason, 'kakao:' + kakaoUserId);
+
     const outputs = [];
-    block.responses.forEach(r => {
+    (block.responses || []).forEach(r => {
       outputs.push({ simpleText: { text: r.message } });
       const urlPhoneButtons = (r.buttons || []).filter(b => b.type === 'url' || b.type === 'phone').map(b => {
         if (b.type === 'url') return { action: 'webLink', label: b.label, webLinkUrl: b.value };
@@ -630,26 +961,22 @@ app.post('/api/kakao-skill', async (req, res) => {
       if (urlPhoneButtons.length) outputs.push({ basicCard: { title: block.title, description: ' ', buttons: urlPhoneButtons } });
     });
 
-    const quickReplies = [];
-    (block.quick_replies || []).forEach(qr => quickReplies.push({ label: qr.label, action: 'message', messageText: qr.label }));
-    block.responses.forEach(r => (r.buttons || []).forEach(b => {
-      if (b.type === 'block') quickReplies.push({ label: b.label, action: 'message', messageText: b.label });
-    }));
-
+    const quickReplies = buildBlockQuickReplies(block, blocks);
     const assistantSummary = (block.responses || []).map(r => r.message || '').join('\n').slice(0, 1200);
     rememberTurn(kakaoUserId, utterance, assistantSummary);
-    return res.json({ version: '2.0', template: { outputs, quickReplies: quickReplies.slice(0, 10) } });
+    return res.json({ version: '2.0', template: { outputs, quickReplies } });
   }
 
-  // 짧은 후속질문은 직전 대화와 합쳐서 자료를 다시 찾음
+  // 확신이 낮으면 1·2등 점수 차이를 보고 폴백. AI가 있을 때만 생성형 보조 사용
   const history = getSession(kakaoUserId);
   const lastUser = [...history].reverse().find(m => m.role === 'user');
   const retrievalQuery = utterance.length <= 15 && lastUser ? `${lastUser.content} ${utterance}` : utterance;
   const candidates = aiCandidateBlocks(retrievalQuery, blocks, 6);
+  const bestCandidate = (match.candidates || [])[0];
 
   if (!AI_ENABLED) {
-    logMissed(utterance, best.idx >= 0 ? blocks[best.idx].title : '', best.score);
-    trackQuery(utterance, best.idx >= 0 ? blocks[best.idx].title : '', false, 'kakao-no-ai', 'kakao:' + kakaoUserId);
+    logMissed(utterance, bestCandidate ? blocks[bestCandidate.idx].title : '', bestCandidate ? bestCandidate.score : 0);
+    trackQuery(utterance, bestCandidate ? blocks[bestCandidate.idx].title : '', false, 'kakao-no-ai-ambiguous', 'kakao:' + kakaoUserId);
     return res.json(kakaoFallbackResponse(utterance, blocks));
   }
 
@@ -661,8 +988,8 @@ app.post('/api/kakao-skill', async (req, res) => {
     return res.json(kakaoAiResponse(answer, candidates, blocks));
   } catch (err) {
     console.error('카카오 AI 응답 오류:', err && err.message ? err.message : err);
-    logMissed(utterance, best.idx >= 0 ? blocks[best.idx].title : '', best.score);
-    trackQuery(utterance, best.idx >= 0 ? blocks[best.idx].title : '', false, 'kakao-ai-error', 'kakao:' + kakaoUserId);
+    logMissed(utterance, bestCandidate ? blocks[bestCandidate.idx].title : '', bestCandidate ? bestCandidate.score : 0);
+    trackQuery(utterance, bestCandidate ? blocks[bestCandidate.idx].title : '', false, 'kakao-ai-error', 'kakao:' + kakaoUserId);
     return res.json(kakaoFallbackResponse(utterance, blocks));
   }
 });
