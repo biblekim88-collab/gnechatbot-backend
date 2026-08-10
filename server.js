@@ -392,6 +392,35 @@ const AI_ENABLED = !!(ANTHROPIC_API_KEY && ANTHROPIC_MODEL);
 // 서버 재시작 시 사라지며, 15분이 지나면 자동 폐기합니다.
 const KAKAO_SESSIONS = new Map();
 const SESSION_TTL_MS = 15 * 60 * 1000;
+
+// 카카오에서 질문을 연속으로 못 알아들은 횟수 관리
+// 2회 이상 연속 실패하면 1:1 채팅상담 바로가기를 우선 노출합니다.
+const KAKAO_FAIL_STREAKS = new Map();
+const FAIL_STREAK_TTL_MS = 30 * 60 * 1000;
+const FAIL_STREAK_ESCALATE_AT = 2;
+
+function getKakaoFailStreak(kakaoUserId) {
+  if (!kakaoUserId) return 0;
+  const entry = KAKAO_FAIL_STREAKS.get(kakaoUserId);
+  if (!entry) return 0;
+  if (Date.now() - entry.updatedAt > FAIL_STREAK_TTL_MS) {
+    KAKAO_FAIL_STREAKS.delete(kakaoUserId);
+    return 0;
+  }
+  return entry.count || 0;
+}
+
+function markKakaoFailure(kakaoUserId) {
+  if (!kakaoUserId) return 1;
+  const count = getKakaoFailStreak(kakaoUserId) + 1;
+  KAKAO_FAIL_STREAKS.set(kakaoUserId, { count, updatedAt: Date.now() });
+  return count;
+}
+
+function resetKakaoFailStreak(kakaoUserId) {
+  if (!kakaoUserId) return;
+  KAKAO_FAIL_STREAKS.delete(kakaoUserId);
+}
 const SESSION_MAX_MESSAGES = 6;
 
 const STOPWORDS = new Set([
@@ -772,19 +801,47 @@ function buildBlockQuickReplies(block, blocks) {
   }).slice(0,10);
 }
 
-function kakaoFallbackResponse(utterance, blocks) {
+function kakaoFallbackResponse(utterance, blocks, options = {}) {
+  const failCount = Number(options.failCount || 0);
+  const escalated = failCount >= FAIL_STREAK_ESCALATE_AT;
   const cands = topCandidates(utterance, blocks, 3);
-  const quickReplies = cands
+  const quickReplies = [];
+
+  // 두 번 이상 연속으로 못 알아들었을 때는 1:1 채팅상담을 가장 먼저 보여줍니다.
+  if (escalated) {
+    const chatBlock = blocks.find(b => (b.title || '').trim() === '일대일 채팅 상담 안내');
+    if (chatBlock) {
+      const chatReply = makeKakaoQuickReply(chatBlock);
+      chatReply.label = '💬 1:1 채팅상담';
+      quickReplies.push(chatReply);
+    }
+  }
+
+  cands
     .map(c => makeKakaoQuickReply(blocks[c.idx]))
-    .filter(q => q.label);
+    .filter(q => q.label)
+    .forEach(q => quickReplies.push(q));
 
   quickReplies.push({ label: '☎ 콜센터 연결', action: 'message', messageText: '콜센터' });
+
+  const text = escalated
+    ? '질문을 계속 정확히 확인하기 어려워요.\n아래 1:1 채팅상담을 이용하시거나, 관련 항목을 선택해주세요.'
+    : '제가 질문을 정확히 확인하기 어려워요.\n조금 더 구체적으로 말씀해주시거나 아래 항목 중에서 골라주세요.';
+
+  // 혹시 같은 항목이 중복으로 들어온 경우 제거
+  const seen = new Set();
+  const deduped = quickReplies.filter(q => {
+    const key = `${q.label}|${q.blockId || q.messageText || ''}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 
   return {
     version: '2.0',
     template: {
-      outputs: [{ simpleText: { text: '제가 질문을 정확히 확인하기 어려워요.\n조금 더 구체적으로 말씀해주시거나 아래 항목 중에서 골라주세요.' } }],
-      quickReplies: quickReplies.slice(0, 10)
+      outputs: [{ simpleText: { text } }],
+      quickReplies: deduped.slice(0, 10)
     }
   };
 }
@@ -943,12 +1000,13 @@ app.post('/api/kakao-skill', async (req, res) => {
   const kakaoUserId = (req.body && req.body.userRequest && req.body.userRequest.user && req.body.userRequest.user.id) || '';
   const blocks = getEffectiveUtterances();
 
-  if (!utterance.trim()) return res.json(kakaoFallbackResponse('', blocks));
+  if (!utterance.trim()) return res.json(kakaoFallbackResponse('', blocks, { failCount: 0 }));
 
   // API 유무와 관계없이 먼저 안전한 규칙/대표질문/오타 매칭을 시도
   const match = smartMatch(utterance, blocks);
   if (match.matched && match.idx >= 0) {
     const block = blocks[match.idx];
+    resetKakaoFailStreak(kakaoUserId);
     trackQuery(utterance, block.title, true, 'kakao-smart-' + match.reason, 'kakao:' + kakaoUserId);
 
     const outputs = [];
@@ -975,22 +1033,25 @@ app.post('/api/kakao-skill', async (req, res) => {
   const bestCandidate = (match.candidates || [])[0];
 
   if (!AI_ENABLED) {
+    const failCount = markKakaoFailure(kakaoUserId);
     logMissed(utterance, bestCandidate ? blocks[bestCandidate.idx].title : '', bestCandidate ? bestCandidate.score : 0);
     trackQuery(utterance, bestCandidate ? blocks[bestCandidate.idx].title : '', false, 'kakao-no-ai-ambiguous', 'kakao:' + kakaoUserId);
-    return res.json(kakaoFallbackResponse(utterance, blocks));
+    return res.json(kakaoFallbackResponse(utterance, blocks, { failCount }));
   }
 
   try {
     const answer = await askClaudeGrounded({ utterance, kakaoUserId, candidates, blocks });
     const candidateTitle = candidates.length ? blocks[candidates[0].idx].title : '';
+    resetKakaoFailStreak(kakaoUserId);
     trackQuery(utterance, candidateTitle ? `AI:${candidateTitle}` : 'AI', true, 'kakao-ai', 'kakao:' + kakaoUserId);
     rememberTurn(kakaoUserId, utterance, answer);
     return res.json(kakaoAiResponse(answer, candidates, blocks));
   } catch (err) {
     console.error('카카오 AI 응답 오류:', err && err.message ? err.message : err);
+    const failCount = markKakaoFailure(kakaoUserId);
     logMissed(utterance, bestCandidate ? blocks[bestCandidate.idx].title : '', bestCandidate ? bestCandidate.score : 0);
     trackQuery(utterance, bestCandidate ? blocks[bestCandidate.idx].title : '', false, 'kakao-ai-error', 'kakao:' + kakaoUserId);
-    return res.json(kakaoFallbackResponse(utterance, blocks));
+    return res.json(kakaoFallbackResponse(utterance, blocks, { failCount }));
   }
 });
 
