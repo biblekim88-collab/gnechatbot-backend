@@ -308,7 +308,12 @@ function kakaoFallbackResponse(utterance, blocks) {
     version: '2.0',
     template: {
       outputs: [{ simpleText: { text: '제가 질문을 정확히 확인하기 어려워요.\n조금 더 구체적으로 말씀해주시거나 아래 항목 중에서 골라주세요.' } }],
-      quickReplies: cands.map(c => ({ label: blocks[c.idx].title, action: 'message', messageText: blocks[c.idx].title }))
+      quickReplies: cands.map(c => ({
+        label: blocks[c.idx].title,
+        action: 'block',
+        blockId: blocks[c.idx].id,
+        messageText: blocks[c.idx].title
+      }))
         .concat([{ label: '☎ 콜센터 연결', action: 'message', messageText: '콜센터' }])
         .slice(0, 10)
     }
@@ -319,7 +324,8 @@ function kakaoAiResponse(text, candidates, blocks) {
   const safeText = (text || '').trim().slice(0, 950);
   const quickReplies = candidates.slice(0, 3).map(c => ({
     label: (blocks[c.idx].title || '').slice(0, 20),
-    action: 'message',
+    action: 'block',
+    blockId: blocks[c.idx].id,
     messageText: blocks[c.idx].title || ''
   }));
   quickReplies.push({ label: '☎ 콜센터 연결', action: 'message', messageText: '콜센터' });
