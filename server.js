@@ -870,26 +870,27 @@ function detectHqContactIntent(rawQuery) {
   return { query: hqContactQueryCore(raw) };
 }
 
-async function fetchGneHqSearchFast(query) {
+async function fetchGneHqSearchFast(query = '', timeoutMs = 8000) {
   // 실제 검색 입력 name이 사이트 개편으로 바뀌어도 최대한 버티도록
   // 자주 쓰이는 검색필드명을 한 번의 GET 요청에 함께 전달합니다.
-  // 공식 페이지가 사용하는 필드만 읽고 나머지는 무시합니다.
+  // 빈 검색어라도 query string 자체를 붙여 '검색 결과 화면'이 렌더링되도록 시도합니다.
   const candidateFields = [
     'searchKeyword','searchText','searchWord','keyword','query','searchQuery',
     'srchKeyword','srchText','srchWord','searchValue','searchBsns','srchBsns',
     'bsnsNm','bsnsCn','bsnsKeyword','searchBsnsCn'
   ];
   const params = new URLSearchParams();
-  candidateFields.forEach(name => params.set(name, query));
+  candidateFields.forEach(name => params.set(name, String(query ?? '')));
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 2800);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(`${GNE_HQ_WORK_SEARCH_URL}?${params.toString()}`, {
       method: 'GET',
       signal: controller.signal,
       headers: {
         'accept': 'text/html,application/xhtml+xml',
-        'user-agent': 'GNE-1004-Chatbot/1.0',
+        'accept-language': 'ko-KR,ko;q=0.9,en;q=0.5',
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0 Safari/537.36',
         'referer': GNE_HQ_WORK_SEARCH_URL
       }
     });
@@ -988,14 +989,56 @@ async function refreshGneHqContacts(timeoutMs = 8000) {
   if (GNE_HQ_REFRESH_PROMISE) return GNE_HQ_REFRESH_PROMISE;
 
   GNE_HQ_REFRESH_PROMISE = (async () => {
-    const html = await fetchOfficialGneHtml(GNE_HQ_WORK_SEARCH_URL, timeoutMs);
-    const rows = parseGneHqWorkSearchResults(html);
-    if (!rows.length) throw new Error('경남교육청 본청 업무분장 행을 찾지 못했습니다.');
+    const attempts = [];
+    let rows = [];
+
+    // 1차: 공식 업무검색 기본 주소
+    try {
+      const html = await fetchOfficialGneHtml(GNE_HQ_WORK_SEARCH_URL, timeoutMs);
+      rows = parseGneHqWorkSearchResults(html);
+      attempts.push(`기본:${rows.length}건/html${String(html || '').length}`);
+    } catch (err) {
+      attempts.push(`기본오류:${err && err.message ? err.message : err}`);
+    }
+
+    // 경남교육청 페이지는 기본 주소만 호출하면 결과 표가 비어 있고,
+    // 검색 요청 형태(query string)가 붙었을 때 전체 업무표가 내려오는 경우가 있어
+    // 같은 공식 페이지를 '빈 검색' 형태로 한 번 더 요청합니다.
+    if (!rows.length) {
+      try {
+        const html = await fetchGneHqSearchFast('', timeoutMs);
+        rows = parseGneHqWorkSearchResults(html);
+        attempts.push(`검색화면:${rows.length}건/html${String(html || '').length}`);
+      } catch (err) {
+        attempts.push(`검색화면오류:${err && err.message ? err.message : err}`);
+      }
+    }
+
+    // 3차: 페이지에 실제 form name이 노출되어 있으면 그 form을 찾아 빈 검색 제출
+    if (!rows.length) {
+      try {
+        const landingHtml = await fetchOfficialGneHtml(GNE_HQ_WORK_SEARCH_URL, timeoutMs);
+        const form = discoverGneHqSearchFormFromHtml(landingHtml);
+        if (form && form.queryField) {
+          const html = await fetchOfficialGneFormResult(form, '');
+          rows = parseGneHqWorkSearchResults(html);
+          attempts.push(`폼검색(${form.queryField}):${rows.length}건/html${String(html || '').length}`);
+        } else {
+          attempts.push('폼검색:검색필드없음');
+        }
+      } catch (err) {
+        attempts.push(`폼검색오류:${err && err.message ? err.message : err}`);
+      }
+    }
+
+    if (!rows.length) {
+      throw new Error(`경남교육청 본청 업무분장 행을 찾지 못했습니다. [${attempts.join(' | ')}]`);
+    }
 
     GNE_HQ_ALL_CONTACTS_CACHE = { updatedAt: Date.now(), rows };
     GNE_HQ_QUERY_CACHE.clear();
     savePersistedHqContacts(rows);
-    console.log(`✅ 본청 업무담당자 캐시 갱신 완료: ${rows.length}건`);
+    console.log(`✅ 본청 업무담당자 캐시 갱신 완료: ${rows.length}건 (${attempts.join(' | ')})`);
     return rows;
   })().finally(() => {
     GNE_HQ_REFRESH_PROMISE = null;
