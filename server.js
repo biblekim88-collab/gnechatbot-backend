@@ -1924,6 +1924,37 @@ function kakaoFallbackResponse(utterance, blocks, options = {}) {
   };
 }
 
+
+function withStaffSearchQuickReply(payload) {
+  if (!payload || !payload.template) return payload;
+
+  const outputBlob = JSON.stringify(payload.template.outputs || []);
+  const hasContactInfo = /(담당자|담당부서|담당과|담당업무|문의처|문의전화)/.test(outputBlob)
+    || /055[- ]?\d{3,4}[- ]?\d{4}/.test(outputBlob);
+
+  // 담당자 관련 정보가 없는 일반 답변에는 노출하지 않습니다.
+  if (!hasContactInfo) return payload;
+
+  // 이미 본청/지역청 검색 링크가 직접 표시된 카드라면 중복 노출하지 않습니다.
+  if (outputBlob.includes('/staff-search')) return payload;
+
+  const quickReplies = Array.isArray(payload.template.quickReplies)
+    ? payload.template.quickReplies.slice()
+    : [];
+
+  const label = '담당자검색(본청, 지역청)';
+  if (!quickReplies.some(q => String((q && q.label) || '') === label)) {
+    quickReplies.unshift({
+      label,
+      action: 'message',
+      messageText: '업무담당자'
+    });
+  }
+
+  payload.template.quickReplies = quickReplies.slice(0, 10);
+  return payload;
+}
+
 function kakaoAiResponse(text, candidates, blocks) {
   const safeText = (text || '').trim().slice(0, 950);
   const quickReplies = candidates
@@ -2242,7 +2273,7 @@ app.post('/api/kakao-skill', async (req, res) => {
   const kakaoUserId = (req.body && req.body.userRequest && req.body.userRequest.user && req.body.userRequest.user.id) || '';
   const blocks = getEffectiveUtterances();
 
-  if (!utterance.trim()) return res.json(kakaoFallbackResponse('', blocks, { failCount: 0 }));
+  if (!utterance.trim()) return res.json(withStaffSearchQuickReply(kakaoFallbackResponse('', blocks, { failCount: 0 })));
 
   // '업무담당자 찾기' 블록에서 @sys.text 파라미터(work)로 받은 검색어는
   // '담당자'라는 단어가 없어도 그대로 본청 업무검색에 사용합니다.
@@ -2251,7 +2282,7 @@ app.post('/api/kakao-skill', async (req, res) => {
     resetKakaoFailStreak(kakaoUserId);
     resetKakaoTransferFailStreak(kakaoUserId);
     trackQuery(utterance, `본청 업무담당자:${hqWorkParam}`, true, 'kakao-live-hq-contact-param', 'kakao:' + kakaoUserId);
-    return res.json(await kakaoHqContactResponse({ query: hqWorkParam }));
+    return res.json(withStaffSearchQuickReply(await kakaoHqContactResponse({ query: hqWorkParam })));
   }
 
   // 전입학 담당자/전화번호 질문은 시나리오 매칭보다 먼저 처리합니다.
@@ -2261,7 +2292,7 @@ app.post('/api/kakao-skill', async (req, res) => {
     resetKakaoFailStreak(kakaoUserId);
     resetKakaoTransferFailStreak(kakaoUserId);
     trackQuery(utterance, '전입학 담당자 실시간 조회', true, 'kakao-live-transfer-contact', 'kakao:' + kakaoUserId);
-    return res.json(await kakaoTransferContactResponse(transferContactIntent));
+    return res.json(withStaffSearchQuickReply(await kakaoTransferContactResponse(transferContactIntent)));
   }
 
 
@@ -2272,7 +2303,7 @@ app.post('/api/kakao-skill', async (req, res) => {
     resetKakaoFailStreak(kakaoUserId);
     resetKakaoTransferFailStreak(kakaoUserId);
     trackQuery(utterance, `본청 업무담당자:${hqContactIntent.query || '업무확인'}`, true, 'kakao-live-hq-contact', 'kakao:' + kakaoUserId);
-    return res.json(await kakaoHqContactResponse(hqContactIntent));
+    return res.json(withStaffSearchQuickReply(await kakaoHqContactResponse(hqContactIntent)));
   }
 
   // 학교급을 말하지 않은 일반 전학 문의는 억지로 한 블록을 고르지 않고
@@ -2281,7 +2312,7 @@ app.post('/api/kakao-skill', async (req, res) => {
     resetKakaoFailStreak(kakaoUserId);
     resetKakaoTransferFailStreak(kakaoUserId);
     trackQuery(utterance, '전입학 학교급 확인', true, 'kakao-clarify-transfer-level', 'kakao:' + kakaoUserId);
-    return res.json(kakaoTransferSchoolLevelResponse(blocks));
+    return res.json(withStaffSearchQuickReply(kakaoTransferSchoolLevelResponse(blocks)));
   }
 
   // API 유무와 관계없이 먼저 안전한 규칙/대표질문/오타 매칭을 시도
@@ -2305,7 +2336,7 @@ app.post('/api/kakao-skill', async (req, res) => {
     const quickReplies = buildBlockQuickReplies(block, blocks);
     const assistantSummary = (block.responses || []).map(r => r.message || '').join('\n').slice(0, 1200);
     rememberTurn(kakaoUserId, utterance, assistantSummary);
-    return res.json({ version: '2.0', template: { outputs, quickReplies } });
+    return res.json(withStaffSearchQuickReply({ version: '2.0', template: { outputs, quickReplies } }));
   }
 
   // 확신이 낮으면 1·2등 점수 차이를 보고 폴백. AI가 있을 때만 생성형 보조 사용
@@ -2326,11 +2357,11 @@ app.post('/api/kakao-skill', async (req, res) => {
     }
     logMissed(utterance, bestCandidate ? blocks[bestCandidate.idx].title : '', bestCandidate ? bestCandidate.score : 0);
     trackQuery(utterance, bestCandidate ? blocks[bestCandidate.idx].title : '', false, 'kakao-no-ai-ambiguous', 'kakao:' + kakaoUserId);
-    return res.json(kakaoFallbackResponse(utterance, blocks, {
+    return res.json(withStaffSearchQuickReply(kakaoFallbackResponse(utterance, blocks, {
       failCount,
       transferFailCount: transferFail.count,
       showTransferAi: transferFail.highSchool
-    }));
+    })));
   }
 
   try {
@@ -2340,7 +2371,7 @@ app.post('/api/kakao-skill', async (req, res) => {
     resetKakaoTransferFailStreak(kakaoUserId);
     trackQuery(utterance, candidateTitle ? `AI:${candidateTitle}` : 'AI', true, 'kakao-ai', 'kakao:' + kakaoUserId);
     rememberTurn(kakaoUserId, utterance, answer);
-    return res.json(kakaoAiResponse(answer, candidates, blocks));
+    return res.json(withStaffSearchQuickReply(kakaoAiResponse(answer, candidates, blocks)));
   } catch (err) {
     console.error('카카오 AI 응답 오류:', err && err.message ? err.message : err);
     const failCount = markKakaoFailure(kakaoUserId);
@@ -2353,11 +2384,11 @@ app.post('/api/kakao-skill', async (req, res) => {
     }
     logMissed(utterance, bestCandidate ? blocks[bestCandidate.idx].title : '', bestCandidate ? bestCandidate.score : 0);
     trackQuery(utterance, bestCandidate ? blocks[bestCandidate.idx].title : '', false, 'kakao-ai-error', 'kakao:' + kakaoUserId);
-    return res.json(kakaoFallbackResponse(utterance, blocks, {
+    return res.json(withStaffSearchQuickReply(kakaoFallbackResponse(utterance, blocks, {
       failCount,
       transferFailCount: transferFail.count,
       showTransferAi: transferFail.highSchool
-    }));
+    })));
   }
 });
 
