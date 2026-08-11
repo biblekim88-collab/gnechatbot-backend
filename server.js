@@ -679,6 +679,337 @@ async function kakaoTransferContactResponse(intent) {
 }
 
 
+// ============ 경상남도교육청 본청 업무담당자 실시간 검색 ============
+// 경남교육청이 제공하는 공식 "업무검색" 페이지의 검색 폼을 그대로 이용합니다.
+// 유료 AI API를 사용하지 않으며, 담당업무/전화번호를 server.js에 고정하지 않습니다.
+const GNE_HQ_WORK_SEARCH_URL = 'https://www.gne.go.kr/user/deptBsnsAsgn/BD_searchDeptBsnsAsgnList.do';
+const HQ_CONTACT_FORM_CACHE_TTL_MS = 12 * 60 * 60 * 1000; // 검색 폼 구조 12시간 캐시
+const HQ_CONTACT_QUERY_CACHE_TTL_MS = 30 * 60 * 1000; // 동일 업무검색 결과 30분 캐시
+let GNE_HQ_SEARCH_FORM_CACHE = null;
+const GNE_HQ_QUERY_CACHE = new Map();
+
+function parseHtmlAttrs(tagText) {
+  const attrs = {};
+  const attrRe = /([:\w-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/g;
+  let m;
+  while ((m = attrRe.exec(String(tagText || ''))) !== null) {
+    attrs[String(m[1] || '').toLowerCase()] = decodeHtmlEntities(m[2] ?? m[3] ?? m[4] ?? '');
+  }
+  return attrs;
+}
+
+function normalizeHqPhone(text) {
+  let value = normalizeOfficialPhone(text);
+  // 본청 페이지 일부 표기는 지역번호가 생략될 수 있어 통화용 표기만 보완합니다.
+  if (/^(?:210|268|278)-\d{4}$/.test(value)) value = `055-${value}`;
+  return value;
+}
+
+function truncateOfficialDuty(text, maxLen = 150) {
+  const clean = String(text || '').replace(/[ㆍ·◦]/g, '·').replace(/\s+/g, ' ').trim();
+  if (clean.length <= maxLen) return clean;
+  return clean.slice(0, maxLen - 1).trimEnd() + '…';
+}
+
+function discoverGneHqSearchFormFromHtml(html) {
+  const forms = [];
+  const formRe = /<form\b([^>]*)>([\s\S]*?)<\/form>/gi;
+  let fm;
+  while ((fm = formRe.exec(String(html || ''))) !== null) {
+    const formAttrs = parseHtmlAttrs(fm[1]);
+    const inner = fm[2];
+    const inputs = [];
+    const inputRe = /<input\b([^>]*)>/gi;
+    let im;
+    while ((im = inputRe.exec(inner)) !== null) {
+      const a = parseHtmlAttrs(im[1]);
+      if (a.name) inputs.push(a);
+    }
+
+    const searchInput = inputs.find(a => {
+      const type = String(a.type || 'text').toLowerCase();
+      if (!['text','search'].includes(type)) return false;
+      const key = `${a.name || ''} ${a.id || ''} ${a.placeholder || ''}`.toLowerCase();
+      return /(bsns|work|search|srch|keyword|query|업무|검색)/.test(key);
+    }) || inputs.find(a => ['text','search'].includes(String(a.type || 'text').toLowerCase()));
+
+    if (!searchInput) continue;
+
+    let score = 0;
+    const action = String(formAttrs.action || '');
+    const plain = htmlFragmentToText(inner);
+    if (/BD_searchDeptBsnsAsgnList\.do/i.test(action)) score += 100;
+    if (/업무검색|찾으시려는 업무|담당업무/.test(plain)) score += 40;
+    if (/(bsns|work)/i.test(searchInput.name || '')) score += 20;
+    if (/(search|srch|keyword|query)/i.test(searchInput.name || '')) score += 10;
+
+    const hidden = {};
+    inputs.forEach(a => {
+      if (String(a.type || '').toLowerCase() === 'hidden' && a.name) hidden[a.name] = a.value || '';
+    });
+
+    forms.push({
+      score,
+      method: String(formAttrs.method || 'GET').toUpperCase(),
+      action: action || GNE_HQ_WORK_SEARCH_URL,
+      queryField: searchInput.name,
+      hidden
+    });
+  }
+
+  if (!forms.length) return null;
+  forms.sort((a,b) => b.score - a.score);
+  const best = forms[0];
+  try { best.action = new URL(best.action, GNE_HQ_WORK_SEARCH_URL).href; }
+  catch (_) { best.action = GNE_HQ_WORK_SEARCH_URL; }
+  return best;
+}
+
+async function fetchOfficialGneFormResult(form, query) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 3000);
+  try {
+    const params = new URLSearchParams({ ...(form.hidden || {}), [form.queryField]: query });
+    const method = String(form.method || 'GET').toUpperCase();
+    const headers = {
+      'accept': 'text/html,application/xhtml+xml',
+      'user-agent': 'GNE-1004-Chatbot/1.0',
+      'referer': GNE_HQ_WORK_SEARCH_URL
+    };
+    let url = form.action || GNE_HQ_WORK_SEARCH_URL;
+    const options = { method, signal: controller.signal, headers };
+    if (method === 'GET') {
+      url += (url.includes('?') ? '&' : '?') + params.toString();
+    } else {
+      headers['content-type'] = 'application/x-www-form-urlencoded; charset=UTF-8';
+      options.body = params.toString();
+    }
+    const response = await fetch(url, options);
+    if (!response.ok) throw new Error(`공식 업무검색 HTTP ${response.status}`);
+    return await response.text();
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function getGneHqSearchForm() {
+  if (GNE_HQ_SEARCH_FORM_CACHE && Date.now() - GNE_HQ_SEARCH_FORM_CACHE.updatedAt < HQ_CONTACT_FORM_CACHE_TTL_MS) {
+    return GNE_HQ_SEARCH_FORM_CACHE.form;
+  }
+  const html = await fetchOfficialGneHtml(GNE_HQ_WORK_SEARCH_URL);
+  const form = discoverGneHqSearchFormFromHtml(html);
+  if (!form || !form.queryField) throw new Error('경남교육청 업무검색 입력 항목을 찾지 못했습니다.');
+  GNE_HQ_SEARCH_FORM_CACHE = { updatedAt: Date.now(), form };
+  return form;
+}
+
+function parseGneHqWorkSearchResults(html) {
+  const rows = [];
+  const trRe = /<tr\b[^>]*>([\s\S]*?)<\/tr>/gi;
+  let tr;
+  while ((tr = trRe.exec(String(html || ''))) !== null) {
+    const cells = [];
+    const cellRe = /<(?:th|td)\b[^>]*>([\s\S]*?)<\/(?:th|td)>/gi;
+    let cell;
+    while ((cell = cellRe.exec(tr[1])) !== null) cells.push(htmlFragmentToText(cell[1]));
+    if (cells.length < 4) continue;
+
+    // 공식 업무검색 결과 표: 부서 | 담당명 | 직위·직급 | 전화번호 | 담당업무
+    const phoneIdx = cells.findIndex(c => /(?:055\s*[-)]?\s*)?(?:210|268|278)\s*-\s*\d{4}/.test(c));
+    if (phoneIdx < 0) continue;
+
+    const department = String(cells[0] || '').trim();
+    const team = String(cells[1] || '').trim();
+    const position = phoneIdx >= 1 ? String(cells[phoneIdx - 1] || '').trim() : '';
+    const phone = normalizeHqPhone(cells[phoneIdx]);
+    const duty = cells.slice(phoneIdx + 1).join(' ').replace(/\s+/g, ' ').trim();
+
+    if (!department || !phone || !duty) continue;
+    if (/^(부서|담당명|전화번호|담당업무)$/.test(department)) continue;
+
+    rows.push({ department, team, position, phone, duty, url: GNE_HQ_WORK_SEARCH_URL });
+  }
+
+  // 같은 전화번호 + 같은 업무가 중복 표출되는 경우 하나로 정리
+  const unique = new Map();
+  rows.forEach(row => {
+    const key = `${row.department}|${row.phone}|${row.duty}`;
+    if (!unique.has(key)) unique.set(key, row);
+  });
+  return [...unique.values()];
+}
+
+function hqContactQueryCore(rawQuery) {
+  let q = String(rawQuery || '').trim();
+  q = q
+    .replace(/경상남도교육청|경남교육청|교육청\s*본청|본청/gi, ' ')
+    .replace(/업무\s*담당자|업무\s*담당|담당\s*공무원|담당자|담당부서|담당과|문의처|연락처|전화번호|전화\s*번호|전화|연락/gi, ' ')
+    .replace(/누구(?:한테|에게)?|어디(?:로|에)?\s*(?:문의|전화)?|문의(?:하고\s*싶어|하려면|해야\s*해|해요|할까요)?/gi, ' ')
+    .replace(/알려\s*줘|알려주세요|알려\s*주세요|찾아\s*줘|찾아주세요|찾아\s*주세요|연결\s*해줘|연결해주세요/gi, ' ')
+    .replace(/[?!.]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return q;
+}
+
+function detectHqContactIntent(rawQuery) {
+  const raw = String(rawQuery || '').trim();
+  const q = compactText(expandQuery(raw));
+  const isContact = /(업무담당자|담당자|담당부서|담당과|전화번호|연락처|문의처|문의|전화|누구한테|누구에게|어디로문의|어디에문의)/.test(q);
+  if (!isContact) return null;
+
+  // 교육지원청·학교·직속기관 담당자는 이번 기능 범위(본청)에서 제외합니다.
+  if (/교육지원청|지원청/.test(q) && !/(경상남도교육청|경남교육청|본청)/.test(q)) return null;
+  if (/(학교담당자|학교전화|학교연락처)/.test(q)) return null;
+
+  return { query: hqContactQueryCore(raw) };
+}
+
+async function fetchGneHqSearchFast(query) {
+  // 실제 검색 입력 name이 사이트 개편으로 바뀌어도 최대한 버티도록
+  // 자주 쓰이는 검색필드명을 한 번의 GET 요청에 함께 전달합니다.
+  // 공식 페이지가 사용하는 필드만 읽고 나머지는 무시합니다.
+  const candidateFields = [
+    'searchKeyword','searchText','searchWord','keyword','query','searchQuery',
+    'srchKeyword','srchText','srchWord','searchValue','searchBsns','srchBsns',
+    'bsnsNm','bsnsCn','bsnsKeyword','searchBsnsCn'
+  ];
+  const params = new URLSearchParams();
+  candidateFields.forEach(name => params.set(name, query));
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 2800);
+  try {
+    const response = await fetch(`${GNE_HQ_WORK_SEARCH_URL}?${params.toString()}`, {
+      method: 'GET',
+      signal: controller.signal,
+      headers: {
+        'accept': 'text/html,application/xhtml+xml',
+        'user-agent': 'GNE-1004-Chatbot/1.0',
+        'referer': GNE_HQ_WORK_SEARCH_URL
+      }
+    });
+    if (!response.ok) throw new Error(`공식 업무검색 HTTP ${response.status}`);
+    return await response.text();
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function getFreshHqQueryCache(query) {
+  const key = compactText(query);
+  const entry = GNE_HQ_QUERY_CACHE.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.updatedAt > HQ_CONTACT_QUERY_CACHE_TTL_MS) {
+    GNE_HQ_QUERY_CACHE.delete(key);
+    return null;
+  }
+  return entry.data;
+}
+
+function saveHqQueryCache(query, data) {
+  const key = compactText(query);
+  GNE_HQ_QUERY_CACHE.set(key, { updatedAt: Date.now(), data });
+  return data;
+}
+
+async function searchGneHqContacts(query) {
+  const core = String(query || '').trim();
+  if (!core) return [];
+
+  const cached = getFreshHqQueryCache(core);
+  if (cached) return cached;
+
+  // 검색 폼 구조를 이미 알아낸 경우 한 번의 요청으로 바로 검색
+  if (GNE_HQ_SEARCH_FORM_CACHE && Date.now() - GNE_HQ_SEARCH_FORM_CACHE.updatedAt < HQ_CONTACT_FORM_CACHE_TTL_MS) {
+    const html = await fetchOfficialGneFormResult(GNE_HQ_SEARCH_FORM_CACHE.form, core);
+    return saveHqQueryCache(core, parseGneHqWorkSearchResults(html));
+  }
+
+  // 첫 검색은 카카오 5초 제한을 고려해 한 번의 빠른 GET으로 먼저 시도
+  try {
+    const fastHtml = await fetchGneHqSearchFast(core);
+    const fastRows = parseGneHqWorkSearchResults(fastHtml);
+    if (fastRows.length) return saveHqQueryCache(core, fastRows);
+  } catch (_) {
+    // 아래의 공식 검색 폼 자동탐색 방식으로 재시도
+  }
+
+  // 빠른 방식으로 결과가 없으면 공식 페이지의 실제 form 구조를 읽어 정확히 재검색
+  const form = await getGneHqSearchForm();
+  const html = await fetchOfficialGneFormResult(form, core);
+  return saveHqQueryCache(core, parseGneHqWorkSearchResults(html));
+}
+
+function kakaoHqContactAskResponse() {
+  return {
+    version: '2.0',
+    template: {
+      outputs: [
+        { simpleText: { text: '경상남도교육청 본청 업무담당자를 찾아드릴게요.\n찾으시는 업무명을 입력해 주세요. (예: 청원, 정보공개, 검정고시, 학교급식)' } },
+        { basicCard: { title: '경남교육청 본청 업무검색', description: '공식 누리집의 업무분장 정보를 실시간으로 조회합니다.', buttons: [{ label: '공식 업무검색', action: 'webLink', webLinkUrl: GNE_HQ_WORK_SEARCH_URL }] } }
+      ]
+    }
+  };
+}
+
+function kakaoHqContactResponseText(query, contacts) {
+  const limited = (contacts || []).slice(0, 3);
+  if (!limited.length) {
+    return `경상남도교육청 본청 업무검색에서 '${query}' 관련 담당자를 찾지 못했어요.\n업무명을 조금 더 구체적으로 입력해 주세요.`;
+  }
+
+  const lines = [`'${query}' 관련 본청 업무담당자를 찾았어요.`];
+  limited.forEach((c, i) => {
+    lines.push('');
+    lines.push(`${i + 1}. ${c.department}${c.team ? ` / ${c.team}` : ''}`);
+    lines.push(`☎ ${c.phone}`);
+    lines.push(`업무: ${truncateOfficialDuty(c.duty, 135)}`);
+  });
+  if ((contacts || []).length > limited.length) {
+    lines.push('');
+    lines.push(`※ 검색 결과가 ${contacts.length}건이라 상위 ${limited.length}건만 표시했어요. 업무명을 더 구체적으로 입력하면 범위를 줄일 수 있어요.`);
+  }
+  lines.push('');
+  lines.push('※ 경상남도교육청 공식 업무검색 결과를 실시간으로 조회한 정보입니다.');
+  return lines.join('\n').slice(0, 980);
+}
+
+async function kakaoHqContactResponse(intent) {
+  const query = String((intent && intent.query) || '').trim();
+  if (!query) return kakaoHqContactAskResponse();
+
+  try {
+    const contacts = await searchGneHqContacts(query);
+    const text = kakaoHqContactResponseText(query, contacts);
+    const buttons = [{ label: '공식 업무검색', action: 'webLink', webLinkUrl: GNE_HQ_WORK_SEARCH_URL }];
+    if (contacts.length === 1) {
+      const callable = firstCallablePhone(contacts[0].phone);
+      if (callable) buttons.unshift({ label: '☎ 담당자 전화', action: 'phone', phoneNumber: callable.replace(/-/g, '') });
+    }
+    return {
+      version: '2.0',
+      template: {
+        outputs: [
+          { simpleText: { text } },
+          { basicCard: { title: '경남교육청 본청 업무담당자', description: contacts.length ? '공식 누리집의 최신 업무분장 검색 결과입니다.' : '검색어를 바꿔 다시 확인해 보세요.', buttons } }
+        ]
+      }
+    };
+  } catch (err) {
+    console.error('본청 업무담당자 실시간 조회 오류:', err && err.message ? err.message : err);
+    return {
+      version: '2.0',
+      template: {
+        outputs: [
+          { simpleText: { text: '현재 경상남도교육청 공식 업무검색 정보를 불러오지 못했어요.\n잘못된 담당자 정보를 임의로 안내하지 않고 공식 업무검색으로 연결해 드릴게요.' } },
+          { basicCard: { title: '경남교육청 본청 업무검색', description: '공식 누리집에서 최신 담당자 정보를 확인해 주세요.', buttons: [{ label: '공식 업무검색', action: 'webLink', webLinkUrl: GNE_HQ_WORK_SEARCH_URL }] } }
+        ]
+      }
+    };
+  }
+}
+
+
 function getKakaoFailStreak(kakaoUserId) {
   if (!kakaoUserId) return 0;
   const entry = KAKAO_FAIL_STREAKS.get(kakaoUserId);
@@ -1389,6 +1720,27 @@ app.post('/api/track', (req, res) => {
   res.json({ status: 'ok' });
 });
 
+// 본청 업무담당자 실시간 조회 테스트용 공개 API
+// 예: /api/hq-contact?query=청원
+app.get('/api/hq-contact', async (req, res) => {
+  const query = String((req.query && req.query.query) || '').trim();
+  if (!query) {
+    return res.status(400).json({
+      ok: false,
+      message: '찾으려는 본청 업무명을 입력해 주세요.',
+      examples: ['청원', '정보공개', '검정고시', '학교급식'],
+      officialUrl: GNE_HQ_WORK_SEARCH_URL
+    });
+  }
+  try {
+    const contacts = await searchGneHqContacts(query);
+    return res.json({ ok: true, query, count: contacts.length, contacts: contacts.slice(0, 10), officialUrl: GNE_HQ_WORK_SEARCH_URL });
+  } catch (err) {
+    console.error('본청 업무담당자 테스트 API 오류:', err && err.message ? err.message : err);
+    return res.status(502).json({ ok: false, message: '경상남도교육청 공식 업무검색 조회에 실패했습니다.', officialUrl: GNE_HQ_WORK_SEARCH_URL });
+  }
+});
+
 // 전입학 담당자 실시간 조회 테스트용 공개 API
 // 예: /api/transfer-contact?query=진주%20중학교%20전학%20담당자
 app.get('/api/transfer-contact', async (req, res) => {
@@ -1445,6 +1797,17 @@ app.post('/api/kakao-skill', async (req, res) => {
     resetKakaoTransferFailStreak(kakaoUserId);
     trackQuery(utterance, '전입학 담당자 실시간 조회', true, 'kakao-live-transfer-contact', 'kakao:' + kakaoUserId);
     return res.json(await kakaoTransferContactResponse(transferContactIntent));
+  }
+
+
+  // 그 외 본청 담당자/전화번호 질문은 경남교육청 공식 "업무검색"에서 실시간 조회합니다.
+  // 예: 청원 담당자, 정보공개 전화번호, 검정고시 담당자, 학교급식 담당자
+  const hqContactIntent = detectHqContactIntent(utterance);
+  if (hqContactIntent) {
+    resetKakaoFailStreak(kakaoUserId);
+    resetKakaoTransferFailStreak(kakaoUserId);
+    trackQuery(utterance, `본청 업무담당자:${hqContactIntent.query || '업무확인'}`, true, 'kakao-live-hq-contact', 'kakao:' + kakaoUserId);
+    return res.json(await kakaoHqContactResponse(hqContactIntent));
   }
 
   // 학교급을 말하지 않은 일반 전학 문의는 억지로 한 블록을 고르지 않고
