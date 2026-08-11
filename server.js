@@ -403,6 +403,281 @@ const FAIL_STREAK_TTL_MS = 30 * 60 * 1000;
 const FAIL_STREAK_ESCALATE_AT = 2;
 const TRANSFER_AI_ESCALATE_AT = 2;
 const HIGH_SCHOOL_TRANSFER_GPT_URL = 'https://chatgpt.com/g/g-6a797a1288d08191a19ab551961d9fdd-godeunghaggyo-jeonibhag';
+// 경상남도교육청 공식 전입학 페이지의 최신 담당자 정보를 실시간 조회합니다.
+// 생성형 AI API와 무관하며, Node의 fetch로 공개 홈페이지를 읽습니다.
+const GNE_HIGH_TRANSFER_URL = 'https://www.gne.go.kr/www/chamyeo/admission/high.jsp';
+const GNE_EMSCHOOL_URL = 'https://www.gne.go.kr/www/chamyeo/admission/emschool.jsp';
+const TRANSFER_CONTACT_CACHE_TTL_MS = 30 * 60 * 1000; // 30분
+const TRANSFER_CONTACT_CACHE = { high: null, middle: null };
+
+const GNE_SUPPORT_REGIONS = [
+  '창원','진주','통영','사천','김해','밀양','거제','양산','의령',
+  '함안','창녕','고성','남해','하동','산청','함양','거창','합천'
+];
+
+function decodeHtmlEntities(text) {
+  return String(text || '')
+    .replace(/&nbsp;|&#160;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&#(\d+);/g, (_, n) => {
+      const code = Number(n);
+      return Number.isFinite(code) ? String.fromCharCode(code) : _;
+    })
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => {
+      const code = parseInt(n, 16);
+      return Number.isFinite(code) ? String.fromCharCode(code) : _;
+    });
+}
+
+function htmlFragmentToText(html) {
+  return decodeHtmlEntities(String(html || '')
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<(br|\/p|\/div|\/li|\/tr|\/td|\/th|\/h[1-6])\b[^>]*>/gi, ' ')
+    .replace(/<[^>]+>/g, ' '))
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function normalizeOfficialPhone(text) {
+  return String(text || '')
+    .replace(/\s*-\s*/g, '-')
+    .replace(/\s*~\s*/g, '~')
+    .replace(/\s*,\s*/g, ', ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function firstCallablePhone(text) {
+  const m = String(text || '').match(/0\d{1,2}\s*-\s*\d{3,4}\s*-\s*\d{4}/);
+  return m ? m[0].replace(/\s+/g, '') : '';
+}
+
+async function fetchOfficialGneHtml(url) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 2800);
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      signal: controller.signal,
+      headers: {
+        'accept': 'text/html,application/xhtml+xml',
+        'user-agent': 'GNE-1004-Chatbot/1.0'
+      }
+    });
+    if (!response.ok) throw new Error(`공식 홈페이지 HTTP ${response.status}`);
+    return await response.text();
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function getFreshTransferContactCache(key) {
+  const entry = TRANSFER_CONTACT_CACHE[key];
+  if (!entry) return null;
+  if (Date.now() - entry.updatedAt > TRANSFER_CONTACT_CACHE_TTL_MS) return null;
+  return entry.data;
+}
+
+function saveTransferContactCache(key, data) {
+  TRANSFER_CONTACT_CACHE[key] = { updatedAt: Date.now(), data };
+  return data;
+}
+
+async function getHighSchoolTransferContact() {
+  const cached = getFreshTransferContactCache('high');
+  if (cached) return cached;
+
+  try {
+    const html = await fetchOfficialGneHtml(GNE_HIGH_TRANSFER_URL);
+    const text = htmlFragmentToText(html);
+    const marker = Math.max(text.lastIndexOf('담당자 정보'), text.lastIndexOf('담당자정보'));
+    const tail = marker >= 0 ? text.slice(marker, marker + 700) : text.slice(-1200);
+
+    let department = '';
+    const deptPart = tail.match(/담당부서\s+(.{1,60}?)\s+전화번호/i);
+    if (deptPart) department = deptPart[1].trim();
+
+    const phoneMatch = tail.match(/0\d{1,2}\s*-\s*\d{3,4}\s*-\s*\d{4}/);
+    const phone = phoneMatch ? normalizeOfficialPhone(phoneMatch[0]) : '';
+
+    if (!department || !phone) throw new Error('고등학교 전입학 담당자 영역을 해석하지 못했습니다.');
+
+    return saveTransferContactCache('high', {
+      level: '고등학교', department, phone, url: GNE_HIGH_TRANSFER_URL
+    });
+  } catch (err) {
+    const stale = TRANSFER_CONTACT_CACHE.high && TRANSFER_CONTACT_CACHE.high.data;
+    if (stale) return { ...stale, stale: true };
+    throw err;
+  }
+}
+
+function parseMiddleSchoolSupportContacts(html) {
+  const rows = [];
+  const trRe = /<tr\b[^>]*>([\s\S]*?)<\/tr>/gi;
+  let tr;
+  while ((tr = trRe.exec(html)) !== null) {
+    const cells = [];
+    const cellRe = /<(?:th|td)\b[^>]*>([\s\S]*?)<\/(?:th|td)>/gi;
+    let cell;
+    while ((cell = cellRe.exec(tr[1])) !== null) cells.push(htmlFragmentToText(cell[1]));
+    if (!cells.length) continue;
+
+    const officeIdx = cells.findIndex(c => /교육지원청/.test(c) && !/^지역교육청$/.test(c));
+    const phoneIdx = cells.findIndex(c => /0\d{1,2}\s*-\s*\d{3,4}\s*-\s*\d{3,4}/.test(c));
+    if (officeIdx < 0 || phoneIdx < 0) continue;
+
+    const office = cells[officeIdx].trim();
+    const region = office.replace(/교육지원청.*$/, '').trim();
+    if (!GNE_SUPPORT_REGIONS.includes(region)) continue;
+
+    rows.push({
+      region,
+      office,
+      department: (cells[officeIdx + 1] || '').trim(),
+      team: (cells[officeIdx + 2] || '').trim(),
+      phone: normalizeOfficialPhone(cells[phoneIdx]),
+      url: GNE_EMSCHOOL_URL
+    });
+  }
+
+  const byRegion = new Map();
+  rows.forEach(row => { if (!byRegion.has(row.region)) byRegion.set(row.region, row); });
+  return [...byRegion.values()];
+}
+
+async function getMiddleSchoolTransferContacts() {
+  const cached = getFreshTransferContactCache('middle');
+  if (cached) return cached;
+
+  try {
+    const html = await fetchOfficialGneHtml(GNE_EMSCHOOL_URL);
+    const contacts = parseMiddleSchoolSupportContacts(html);
+    if (contacts.length < 10) throw new Error(`중학교 전입학 담당자 표 해석 결과가 부족합니다(${contacts.length}건).`);
+    return saveTransferContactCache('middle', contacts);
+  } catch (err) {
+    const stale = TRANSFER_CONTACT_CACHE.middle && TRANSFER_CONTACT_CACHE.middle.data;
+    if (stale) return stale.map(x => ({ ...x, stale: true }));
+    throw err;
+  }
+}
+
+function detectTransferContactIntent(rawQuery) {
+  const q = compactText(expandQuery(rawQuery));
+  const isTransfer = /(전입학|전학|편입학|학교옮)/.test(q);
+  const isContact = /(담당자|담당부서|전화번호|연락처|문의처|전화|어디로문의|어디에문의|누구한테|누구에게)/.test(q);
+  if (!isTransfer || !isContact) return null;
+
+  let level = '';
+  if (/(고등학교|고교|고딩|고등학생)/.test(q)) level = 'high';
+  else if (/(중학교|중딩|중학생)/.test(q)) level = 'middle';
+  else if (/(초등학교|초딩|초등학생)/.test(q)) level = 'elementary';
+
+  const region = GNE_SUPPORT_REGIONS.find(name => q.includes(name)) || '';
+  return { level, region };
+}
+
+function kakaoTransferContactLevelResponse() {
+  return {
+    version: '2.0',
+    template: {
+      outputs: [{ simpleText: { text: '전학 담당자를 확인하려면 학교급을 알려주세요.\n고등학교, 중학교, 초등학교 중에서 선택해 주세요.' } }],
+      quickReplies: [
+        { label: '고등학교 전학 담당자', action: 'message', messageText: '고등학교 전학 담당자' },
+        { label: '중학교 전학 담당자', action: 'message', messageText: '중학교 전학 담당자' },
+        { label: '초등학교 전학 안내', action: 'message', messageText: '초등학교 전학 담당자' }
+      ]
+    }
+  };
+}
+
+function kakaoOfficialPageCard(title, description, url, phone) {
+  const buttons = [];
+  const callable = firstCallablePhone(phone);
+  if (callable) buttons.push({ label: '☎ 담당자 전화', action: 'phone', phoneNumber: callable.replace(/-/g, '') });
+  buttons.push({ label: '공식 전입학 안내', action: 'webLink', webLinkUrl: url });
+  return { basicCard: { title, description: description || ' ', buttons } };
+}
+
+async function kakaoTransferContactResponse(intent) {
+  try {
+    if (!intent.level) return kakaoTransferContactLevelResponse();
+
+    if (intent.level === 'high') {
+      const contact = await getHighSchoolTransferContact();
+      const freshness = contact.stale ? '\n※ 공식 홈페이지 실시간 조회가 지연되어 직전 조회 정보를 표시합니다.' : '';
+      const text = `고등학교 전입학 담당자 정보입니다.\n담당부서: ${contact.department}\n전화번호: ${contact.phone}${freshness}`;
+      return {
+        version: '2.0',
+        template: {
+          outputs: [
+            { simpleText: { text } },
+            kakaoOfficialPageCard('고등학교 전입학', '경상남도교육청 공식 페이지의 담당자 정보를 불러왔어요.', contact.url, contact.phone)
+          ]
+        }
+      };
+    }
+
+    if (intent.level === 'middle') {
+      if (!intent.region) {
+        return {
+          version: '2.0',
+          template: {
+            outputs: [
+              { simpleText: { text: '중학교 전학은 전입하려는 지역의 교육지원청 담당자를 확인해야 해요.\n전입하려는 경남 시·군을 입력해 주세요. (예: 진주 중학교 전학 담당자)' } },
+              { basicCard: { title: '초·중학교 전입학', description: '지역교육지원청 전입학 담당자 현황은 공식 페이지에서 확인할 수 있어요.', buttons: [{ label: '공식 담당자 현황', action: 'webLink', webLinkUrl: GNE_EMSCHOOL_URL }] } }
+            ]
+          }
+        };
+      }
+
+      const contacts = await getMiddleSchoolTransferContacts();
+      const contact = contacts.find(x => x.region === intent.region);
+      if (!contact) throw new Error(`${intent.region} 지역 담당자 행을 찾지 못했습니다.`);
+
+      const freshness = contact.stale ? '\n※ 공식 홈페이지 실시간 조회가 지연되어 직전 조회 정보를 표시합니다.' : '';
+      const text = `${contact.region} 중학교 전입학 담당자 정보입니다.\n${contact.office}\n담당과: ${contact.department}\n담당: ${contact.team}\n전화번호: ${contact.phone}${freshness}`;
+      return {
+        version: '2.0',
+        template: {
+          outputs: [
+            { simpleText: { text } },
+            kakaoOfficialPageCard(`${contact.region} 중학교 전입학`, `${contact.office} 공식 담당자 정보입니다.`, contact.url, contact.phone)
+          ]
+        }
+      };
+    }
+
+    return {
+      version: '2.0',
+      template: {
+        outputs: [
+          { simpleText: { text: '경상남도교육청 공식 초·중학교 전입학 페이지에는 초등학교 전학 절차는 안내되어 있지만, 지역교육청 담당자 현황 표는 중학교 항목으로 게시되어 있어 초등학교 담당자로 임의 안내하지 않아요.\n정확한 담당자는 공식 페이지에서 확인해 주세요.' } },
+          { basicCard: { title: '초·중학교 전입학 공식 안내', description: '경상남도교육청 공식 페이지', buttons: [{ label: '공식 페이지 확인', action: 'webLink', webLinkUrl: GNE_EMSCHOOL_URL }] } }
+        ]
+      }
+    };
+  } catch (err) {
+    console.error('전입학 담당자 실시간 조회 오류:', err && err.message ? err.message : err);
+    const url = intent && intent.level === 'high' ? GNE_HIGH_TRANSFER_URL : GNE_EMSCHOOL_URL;
+    return {
+      version: '2.0',
+      template: {
+        outputs: [
+          { simpleText: { text: '현재 경상남도교육청 공식 홈페이지의 담당자 정보를 실시간으로 불러오지 못했어요.\n잘못된 연락처를 임의로 안내하지 않고, 공식 페이지에서 확인할 수 있도록 연결해 드릴게요.' } },
+          { basicCard: { title: '전입학 공식 안내', description: '공식 홈페이지에서 최신 담당자 정보를 확인해 주세요.', buttons: [{ label: '공식 페이지 확인', action: 'webLink', webLinkUrl: url }] } }
+        ]
+      }
+    };
+  }
+}
+
 
 function getKakaoFailStreak(kakaoUserId) {
   if (!kakaoUserId) return 0;
@@ -1114,6 +1389,43 @@ app.post('/api/track', (req, res) => {
   res.json({ status: 'ok' });
 });
 
+// 전입학 담당자 실시간 조회 테스트용 공개 API
+// 예: /api/transfer-contact?query=진주%20중학교%20전학%20담당자
+app.get('/api/transfer-contact', async (req, res) => {
+  const query = String((req.query && req.query.query) || '').trim();
+  const intent = detectTransferContactIntent(query);
+  if (!intent) {
+    return res.status(400).json({
+      ok: false,
+      message: '전입학 담당자 질문을 입력해 주세요.',
+      examples: ['고등학교 전학 담당자', '진주 중학교 전학 담당자']
+    });
+  }
+
+  try {
+    if (!intent.level) {
+      return res.json({ ok: true, needsSchoolLevel: true, region: intent.region || '' });
+    }
+    if (intent.level === 'high') {
+      const contact = await getHighSchoolTransferContact();
+      return res.json({ ok: true, contact });
+    }
+    if (intent.level === 'middle') {
+      if (!intent.region) {
+        return res.json({ ok: true, needsRegion: true, supportedRegions: GNE_SUPPORT_REGIONS, officialUrl: GNE_EMSCHOOL_URL });
+      }
+      const contacts = await getMiddleSchoolTransferContacts();
+      const contact = contacts.find(x => x.region === intent.region);
+      if (!contact) return res.status(404).json({ ok: false, message: '공식 페이지에서 해당 지역 담당자를 찾지 못했습니다.', officialUrl: GNE_EMSCHOOL_URL });
+      return res.json({ ok: true, contact });
+    }
+    return res.json({ ok: true, level: 'elementary', officialUrl: GNE_EMSCHOOL_URL, note: '초등학교 담당자는 중학교 담당자 표와 임의로 연결하지 않습니다.' });
+  } catch (err) {
+    console.error('전입학 담당자 테스트 API 오류:', err && err.message ? err.message : err);
+    return res.status(502).json({ ok: false, message: '공식 홈페이지 실시간 조회에 실패했습니다.' });
+  }
+});
+
 // ---- 카카오톡 오픈빌더 폴백 스킬 웹훅 ----
 // 1) 제목/등록발화와 매우 명확하게 일치하는 짧은 질문 -> 기존 고정답변
 // 2) 자연어·복합질문·후속질문 -> 관련 자료 여러 개 검색 -> 생성형 AI가 자료 안에서 답변
@@ -1124,6 +1436,16 @@ app.post('/api/kakao-skill', async (req, res) => {
   const blocks = getEffectiveUtterances();
 
   if (!utterance.trim()) return res.json(kakaoFallbackResponse('', blocks, { failCount: 0 }));
+
+  // 전입학 담당자/전화번호 질문은 시나리오 매칭보다 먼저 처리합니다.
+  // 경상남도교육청 공식 홈페이지를 실시간 조회하므로 번호를 server.js에 고정하지 않습니다.
+  const transferContactIntent = detectTransferContactIntent(utterance);
+  if (transferContactIntent) {
+    resetKakaoFailStreak(kakaoUserId);
+    resetKakaoTransferFailStreak(kakaoUserId);
+    trackQuery(utterance, '전입학 담당자 실시간 조회', true, 'kakao-live-transfer-contact', 'kakao:' + kakaoUserId);
+    return res.json(await kakaoTransferContactResponse(transferContactIntent));
+  }
 
   // 학교급을 말하지 않은 일반 전학 문의는 억지로 한 블록을 고르지 않고
   // 고등학교/중학교 전입학 두 선택지를 함께 보여줍니다.
