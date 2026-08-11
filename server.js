@@ -16,6 +16,7 @@ app.use(cors());               // 필요하면 특정 도메인만 허용하도�
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
+const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || 'https://gnechatbot-backend.onrender.com').replace(/\/$/, '');
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || 'change-me';
 
 const DATA_DIR = path.join(__dirname, 'data');
@@ -1231,12 +1232,15 @@ function kakaoHqContactAskResponse() {
     version: '2.0',
     template: {
       outputs: [
-        { simpleText: { text: '경상남도교육청 본청 업무담당자를 찾아드릴게요.\n찾으시는 업무명을 입력해 주세요.\n예) 청원, 정보공개, 검정고시, 학교급식' } }
-      ],
-      quickReplies: [
-        { label: '검정고시', action: 'message', messageText: '검정고시' },
-        { label: '정보공개', action: 'message', messageText: '정보공개' },
-        { label: '청원', action: 'message', messageText: '청원' }
+        {
+          basicCard: {
+            title: '경상남도교육청 본청 업무담당자',
+            description: '아래 검색창에서 업무명을 입력하면 최신 업무분장 정보에서 담당자를 찾아드립니다.\n예) 검정고시, 청원, 정보공개, 지방공무원 인사',
+            buttons: [
+              { label: '🔎 업무담당자 검색', action: 'webLink', webLinkUrl: `${PUBLIC_BASE_URL}/staff-search` }
+            ]
+          }
+        }
       ]
     }
   };
@@ -2009,6 +2013,76 @@ app.post('/api/track', (req, res) => {
   const { query, matchedTitle, matched, source, visitorId } = req.body || {};
   trackQuery(query, matchedTitle, matched, source || 'web', visitorId);
   res.json({ status: 'ok' });
+});
+
+// 본청 업무담당자 검색용 모바일 페이지
+// 카카오 인앱브라우저에서도 별도 업무 발화 등록 없이 검색할 수 있습니다.
+app.get('/staff-search', (req, res) => {
+  res.type('html').send(`<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>경상남도교육청 본청 업무담당자 검색</title>
+<style>
+  *{box-sizing:border-box} body{margin:0;background:#f4f6f8;font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",sans-serif;color:#222}
+  .wrap{max-width:720px;margin:0 auto;padding:18px 14px 40px}
+  .card{background:#fff;border-radius:16px;padding:18px;box-shadow:0 2px 12px rgba(0,0,0,.06)}
+  h1{font-size:20px;margin:0 0 6px}.sub{font-size:14px;line-height:1.55;color:#666;margin-bottom:16px}
+  .search{display:flex;gap:8px}.search input{flex:1;min-width:0;height:46px;border:1px solid #cfd6dd;border-radius:10px;padding:0 13px;font-size:16px;outline:none}.search input:focus{border-color:#777}
+  .search button{height:46px;border:0;border-radius:10px;padding:0 17px;font-size:15px;font-weight:700;background:#fee500;color:#191919;cursor:pointer}
+  .examples{display:flex;gap:7px;flex-wrap:wrap;margin-top:12px}.chip{border:1px solid #e1e5e9;background:#fff;border-radius:999px;padding:7px 10px;font-size:13px;cursor:pointer}
+  #status{font-size:14px;color:#666;margin:16px 2px 8px}.result{background:#fff;border-radius:14px;padding:15px 16px;margin-top:10px;box-shadow:0 1px 8px rgba(0,0,0,.05)}
+  .dept{font-weight:800;font-size:16px;margin-bottom:6px}.phone{display:inline-block;margin:2px 0 8px;font-weight:700;color:#1b5dbf;text-decoration:none}.duty{font-size:14px;line-height:1.55;white-space:pre-wrap;color:#444}
+  .notice{font-size:12px;line-height:1.5;color:#777;margin-top:16px}.empty{background:#fff;border-radius:14px;padding:18px;margin-top:10px;color:#555}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1>본청 업무담당자 검색</h1>
+    <div class="sub">찾으시는 <b>업무명만</b> 입력해 주세요. ‘담당자’라고 붙이지 않아도 됩니다.<br>경상남도교육청 공식 업무분장 정보를 기준으로 검색합니다.</div>
+    <div class="search">
+      <input id="q" type="search" placeholder="예: 지방공무원 인사" autocomplete="off">
+      <button id="btn" type="button">검색</button>
+    </div>
+    <div class="examples">
+      <button class="chip" data-q="검정고시">검정고시</button>
+      <button class="chip" data-q="청원">청원</button>
+      <button class="chip" data-q="정보공개">정보공개</button>
+      <button class="chip" data-q="지방공무원 인사">지방공무원 인사</button>
+    </div>
+  </div>
+  <div id="status"></div>
+  <div id="results"></div>
+  <div class="notice">※ 교육감·부교육감·국장·과장·사무관 등 관리·총괄 직위는 검색 결과에서 제외하고 실무담당자를 우선 안내합니다. 조직개편·인사이동 직후에는 공식 누리집 정보 반영 시점에 따라 차이가 있을 수 있습니다.</div>
+</div>
+<script>
+const q=document.getElementById('q'), btn=document.getElementById('btn'), status=document.getElementById('status'), results=document.getElementById('results');
+function esc(v){return String(v??'').replace(/[&<>\"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[m]));}
+function tel(v){const m=String(v||'').match(/0\d{1,2}-\d{3,4}-\d{4}/);return m?m[0]:'';}
+async function search(){
+  const query=q.value.trim();
+  if(!query){q.focus();return;}
+  btn.disabled=true; status.textContent='검색 중입니다…'; results.innerHTML='';
+  try{
+    const r=await fetch('/api/hq-contact?query='+encodeURIComponent(query),{cache:'no-store'});
+    const d=await r.json();
+    if(!r.ok||!d.ok) throw new Error(d.message||'검색에 실패했습니다.');
+    const list=Array.isArray(d.contacts)?d.contacts:[];
+    status.textContent="'"+query+"' 검색 결과 "+list.length+"건";
+    if(!list.length){results.innerHTML='<div class="empty">관련 실무담당자를 찾지 못했습니다. 업무명을 조금 더 구체적으로 입력해 주세요.</div>';return;}
+    results.innerHTML=list.slice(0,5).map(c=>{
+      const p=tel(c.phone), phone=p?'<a class="phone" href="tel:'+p.replace(/-/g,'')+'">☎ '+esc(p)+'</a>':'<div class="phone">☎ '+esc(c.phone||'')+'</div>';
+      return '<div class="result"><div class="dept">'+esc(c.department||'')+(c.team?' / '+esc(c.team):'')+'</div>'+phone+'<div class="duty">'+esc(c.duty||'')+'</div></div>';
+    }).join('');
+  }catch(e){status.textContent='';results.innerHTML='<div class="empty">'+esc(e.message||'검색 중 오류가 발생했습니다.')+' 잠시 후 다시 이용해 주세요.</div>';}
+  finally{btn.disabled=false;}
+}
+btn.addEventListener('click',search); q.addEventListener('keydown',e=>{if(e.key==='Enter')search();});
+document.querySelectorAll('.chip').forEach(b=>b.addEventListener('click',()=>{q.value=b.dataset.q||'';search();}));
+</script>
+</body></html>`);
 });
 
 // 본청 업무담당자 실시간 조회 테스트용 공개 API
