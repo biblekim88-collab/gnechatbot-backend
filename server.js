@@ -2060,6 +2060,8 @@ app.get('/staff-search', (req, res) => {
       <button class="chip" data-q="정보공개">정보공개</button>
       <button class="chip" data-q="지방공무원 인사">지방공무원 인사</button>
     </div>
+    <div id="status"></div>
+    <div id="results"></div>
     <button id="regionToggle" class="region-toggle" type="button">🏫 지역교육청 안내 보기</button>
     <div id="regionBox">
       <div class="region-title">지역교육지원청 누리집</div>
@@ -2086,8 +2088,6 @@ app.get('/staff-search', (req, res) => {
       </div>
     </div>
   </div>
-  <div id="status"></div>
-  <div id="results"></div>
   <div class="notice">※ 교육감·부교육감·국장·과장·사무관 등 관리·총괄 직위는 검색 결과에서 제외하고 실무담당자를 우선 안내합니다.<br>※ 이 검색은 경상남도교육청 <b>본청 업무분장</b> 기준입니다. 지역교육지원청 소관 업무는 해당 교육지원청 누리집을 확인해 주세요.</div>
 </div>
 <script>
@@ -2108,7 +2108,7 @@ async function search(){
     if(!r.ok||!d.ok) throw new Error(d.message||'검색에 실패했습니다.');
     const list=Array.isArray(d.contacts)?d.contacts:[];
     status.textContent="'"+query+"' 검색 결과 "+list.length+"건";
-    if(!list.length){results.innerHTML='<div class="empty">본청 관련 실무담당자를 찾지 못했습니다. 지역교육지원청 소관 업무라면 위의 <b>지역교육청 안내</b>를 이용해 주세요.</div>';return;}
+    if(!list.length){results.innerHTML='<div class="empty">본청 관련 실무담당자를 찾지 못했습니다. 지역교육지원청 소관 업무라면 아래의 <b>지역교육청 안내</b>를 이용해 주세요.</div>';return;}
     results.innerHTML=list.slice(0,5).map(c=>{
       const p=tel(c.phone), phone=p?'<a class="phone" href="tel:'+p.replace(/-/g,'')+'">☎ '+esc(p)+'</a>':'<div class="phone">☎ '+esc(c.phone||'')+'</div>';
       return '<div class="result"><div class="dept">'+esc(c.department||'')+(c.team?' / '+esc(c.team):'')+'</div>'+phone+'<div class="duty">'+esc(c.duty||'')+'</div></div>';
