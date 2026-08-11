@@ -845,6 +845,55 @@ function parseGneHqWorkSearchResults(html) {
   return [...unique.values()];
 }
 
+function normalizeHqContactSearchQuery(rawQuery) {
+  let q = String(rawQuery || '').trim().replace(/\s+/g, ' ');
+  if (!q) return '';
+
+  // 민원인이 자주 붙이는 표현 때문에 공식 업무분장 검색어가 지나치게 좁아지지 않도록
+  // 의미가 명확한 경우에만 대표 검색어로 정규화합니다.
+  // 예) '다자녀 지원 담당자' → '다자녀'
+  const compact = compactText(q);
+  if (/^다자녀(?:지원|지원금|입학지원|입학지원금|교육비지원)?$/.test(compact)) return '다자녀';
+
+  return q;
+}
+
+// 본청 업무담당자 검색에서 민원인이 붙이는 일반적인 행동어 때문에
+// 공식 업무분장 핵심어를 놓치는 경우를 보완합니다.
+// 1차 검색이 실패한 경우에만 사용하므로, 원래 검색의 정확도를 해치지 않습니다.
+function hqContactFallbackQueries(query) {
+  const raw = String(query || '').trim().replace(/\s+/g, ' ');
+  if (!raw) return [];
+
+  const out = [];
+  const add = value => {
+    const v = String(value || '').trim().replace(/\s+/g, ' ');
+    if (v && compactText(v) !== compactText(raw) && !out.some(x => compactText(x) === compactText(v))) out.push(v);
+  };
+
+  // 예) '제증명 발급'→'제증명', '검정고시 접수'→'검정고시',
+  //     '직업교육 지원'→'직업교육', '학교폭력 신고'→'학교폭력'
+  const generic = new Set([
+    '지원','지원금','신청','신청방법','발급','재발급','접수','신고','처리',
+    '운영','관리','상담','안내','이용','청구','문의','업무','관련'
+  ]);
+  const tokens = (raw.match(/[가-힣A-Za-z0-9]+/g) || []).filter(Boolean);
+  const reduced = tokens.filter(t => !generic.has(t));
+  if (reduced.length && reduced.length < tokens.length) add(reduced.join(' '));
+
+  // 띄어쓰기 없이 입력한 경우도 제한적으로 보완합니다.
+  // 핵심어가 3글자 이상일 때만 잘라 '교육지원'→'교육' 같은 과도한 축약을 막습니다.
+  const compact = compactText(raw);
+  const suffixes = ['신청방법','재발급','지원금','지원','신청','발급','접수','신고','처리','운영','관리','상담','안내','이용','청구'];
+  for (const suffix of suffixes) {
+    if (!compact.endsWith(suffix)) continue;
+    const stem = compact.slice(0, -suffix.length);
+    if (stem.length >= 3) add(stem);
+  }
+
+  return out;
+}
+
 function hqContactQueryCore(rawQuery) {
   let q = String(rawQuery || '').trim();
   q = q
@@ -855,7 +904,7 @@ function hqContactQueryCore(rawQuery) {
     .replace(/[?!.]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
-  return q;
+  return normalizeHqContactSearchQuery(q);
 }
 
 function detectHqContactIntent(rawQuery) {
@@ -1229,14 +1278,27 @@ async function getAllGneHqContacts() {
 }
 
 async function searchGneHqContacts(query) {
-  const core = String(query || '').trim();
+  const core = normalizeHqContactSearchQuery(query);
   if (!core) return [];
 
   const cached = getFreshHqQueryCache(core);
   if (cached) return cached;
 
   const allRows = await getAllGneHqContacts();
-  const filtered = rankHqContactRows(core, allRows);
+  let filtered = rankHqContactRows(core, allRows);
+
+  // 전체 표현이 업무분장과 맞지 않을 때만 일반적인 행동어를 덜어낸 핵심어로 재검색합니다.
+  // 특정 업무를 하드코딩하지 않아 '제증명 발급', '검정고시 접수', '직업교육 지원' 등도 같이 보완됩니다.
+  if (!filtered.length) {
+    for (const fallback of hqContactFallbackQueries(core)) {
+      const retry = rankHqContactRows(fallback, allRows);
+      if (retry.length) {
+        filtered = retry;
+        break;
+      }
+    }
+  }
+
   return saveHqQueryCache(core, filtered);
 }
 
