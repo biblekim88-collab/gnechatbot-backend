@@ -2065,24 +2065,24 @@ app.get('/staff-search', (req, res) => {
       <div class="region-title">지역교육지원청 누리집</div>
       <div class="region-help">지역을 선택한 뒤 해당 교육지원청의 조직·업무안내(업무분장)를 확인해 주세요.</div>
       <div class="regions">
-        <a class="region-link" href="https://cwedu.gne.go.kr/" target="_blank" rel="noopener">창원</a>
-        <a class="region-link" href="https://jjedu.gne.go.kr/" target="_blank" rel="noopener">진주</a>
-        <a class="region-link" href="https://tyedu.gne.go.kr/" target="_blank" rel="noopener">통영</a>
-        <a class="region-link" href="https://scedu.gne.go.kr/" target="_blank" rel="noopener">사천</a>
-        <a class="region-link" href="https://ghedu.gne.go.kr/" target="_blank" rel="noopener">김해</a>
-        <a class="region-link" href="https://myedu.gne.go.kr/" target="_blank" rel="noopener">밀양</a>
-        <a class="region-link" href="https://gjedu.gne.go.kr/" target="_blank" rel="noopener">거제</a>
-        <a class="region-link" href="https://ysedu.gne.go.kr/" target="_blank" rel="noopener">양산</a>
-        <a class="region-link" href="https://uredu.gne.go.kr/" target="_blank" rel="noopener">의령</a>
-        <a class="region-link" href="https://hmedu.gne.go.kr/" target="_blank" rel="noopener">함안</a>
-        <a class="region-link" href="https://cnedu.gne.go.kr/" target="_blank" rel="noopener">창녕</a>
-        <a class="region-link" href="https://gsedu.gne.go.kr/" target="_blank" rel="noopener">고성</a>
-        <a class="region-link" href="https://nhedu.gne.go.kr/" target="_blank" rel="noopener">남해</a>
-        <a class="region-link" href="https://hdedu.gne.go.kr/" target="_blank" rel="noopener">하동</a>
-        <a class="region-link" href="https://schedu.gne.go.kr/" target="_blank" rel="noopener">산청</a>
-        <a class="region-link" href="https://hyedu.gne.go.kr/" target="_blank" rel="noopener">함양</a>
-        <a class="region-link" href="https://gcedu.gne.go.kr/" target="_blank" rel="noopener">거창</a>
-        <a class="region-link" href="https://hcedu.gne.go.kr/" target="_blank" rel="noopener">합천</a>
+        <a class="region-link" href="https://cwedu.gne.go.kr/cwedu/jo/jobshare/selectJobShareView.do?mi=6769" target="_blank" rel="noopener">창원</a>
+        <a class="region-link" href="https://jjedu.gne.go.kr/jjedu/jo/jobshare/selectJobShareView.do?mi=6776" target="_blank" rel="noopener">진주</a>
+        <a class="region-link" href="https://tyedu.gne.go.kr/tyedu/jo/jobshare/selectJobShareView.do?mi=6787" target="_blank" rel="noopener">통영</a>
+        <a class="region-link" href="https://scedu.gne.go.kr/scedu/jo/jobshare/selectJobShareView.do?mi=6778" target="_blank" rel="noopener">사천</a>
+        <a class="region-link" href="https://ghedu.gne.go.kr/ghedu/jo/jobshare/selectJobShareView.do?mi=6752" target="_blank" rel="noopener">김해</a>
+        <a class="region-link" href="https://myedu.gne.go.kr/myedu/jo/jobshare/selectJobShareView.do?mi=6739" target="_blank" rel="noopener">밀양</a>
+        <a class="region-link" href="https://gjedu.gne.go.kr/gjedu/jo/jobshare/selectJobShareView.do?mi=6693" target="_blank" rel="noopener">거제</a>
+        <a class="region-link" href="https://ysedu.gne.go.kr/ysedu/jo/jobshare/selectJobShareView.do?mi=6583" target="_blank" rel="noopener">양산</a>
+        <a class="region-link" href="https://uredu.gne.go.kr/uredu/jo/jobshare/selectJobShareView.do?mi=6637" target="_blank" rel="noopener">의령</a>
+        <a class="region-link" href="https://hmedu.gne.go.kr/hmedu/jo/jobshare/selectJobShareView.do?mi=6628" target="_blank" rel="noopener">함안</a>
+        <a class="region-link" href="https://cnedu.gne.go.kr/cnedu/jo/jobshare/selectJobShareView.do?mi=6626" target="_blank" rel="noopener">창녕</a>
+        <a class="region-link" href="https://gsedu.gne.go.kr/gsedu/jo/jobshare/selectJobShareView.do?mi=6588" target="_blank" rel="noopener">고성</a>
+        <a class="region-link" href="https://nhedu.gne.go.kr/nhedu/jo/jobshare/selectJobShareView.do?mi=6586" target="_blank" rel="noopener">남해</a>
+        <a class="region-link" href="https://hdedu.gne.go.kr/hdedu/jo/jobshare/selectJobShareView.do?mi=6572" target="_blank" rel="noopener">하동</a>
+        <a class="region-link" href="https://schedu.gne.go.kr/schedu/jo/jobshare/selectJobShareView.do?mi=6566" target="_blank" rel="noopener">산청</a>
+        <a class="region-link" href="https://hyedu.gne.go.kr/hyedu/jo/jobshare/selectJobShareView.do?mi=6570" target="_blank" rel="noopener">함양</a>
+        <a class="region-link" href="https://gcedu.gne.go.kr/gcedu/jo/jobshare/selectJobShareView.do?mi=6467" target="_blank" rel="noopener">거창</a>
+        <a class="region-link" href="https://hcedu.gne.go.kr/hcedu/jo/jobshare/selectJobShareView.do?mi=6568" target="_blank" rel="noopener">합천</a>
       </div>
     </div>
   </div>
