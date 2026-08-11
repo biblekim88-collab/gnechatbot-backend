@@ -1,4 +1,4 @@
-// 경남교육청 1004챗봇 백엔드 서버
+// 경상남도교육청 민원 챗봇 백엔드 서버
 // - 카카오톡 오픈빌더 폴백 스킬 응답
 // - 웹챗봇 로그 / 학습 API (모두가 공유하는 중앙 저장소)
 //
@@ -2592,7 +2592,7 @@ app.get('/admin', (req, res) => {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>1004챗봇 관리자</title>
+<title>경상남도교육청 민원 챗봇 관리자</title>
 <style>
   *{box-sizing:border-box} body{margin:0;background:#f4f6f8;font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",sans-serif;color:#222}
   .wrap{max-width:960px;margin:0 auto;padding:18px 14px 60px}
@@ -2632,7 +2632,7 @@ app.get('/admin', (req, res) => {
   </div>
 
   <div id="dash" style="display:none">
-    <h1>1004챗봇 관리자 대시보드 <button class="ghost" id="logoutBtn" style="height:32px;padding:0 10px;font-size:12px">로그아웃</button></h1>
+    <h1>경상남도교육청 민원 챗봇 관리자 대시보드 <button class="ghost" id="logoutBtn" style="height:32px;padding:0 10px;font-size:12px">로그아웃</button></h1>
 
     <div class="card">
       <h2>전체 통계 <button class="ghost" id="refreshBtn" style="height:32px;padding:0 10px;font-size:12px">새로고침</button></h2>
@@ -2768,7 +2768,7 @@ if (TOKEN) { document.getElementById('token').value=''; login(); }
 });
 
 app.get('/', (req, res) => {
-  res.send('경남교육청 1004챗봇 백엔드가 정상적으로 실행 중입니다.');
+  res.send('경상남도교육청 민원 챗봇 백엔드가 정상적으로 실행 중입니다.');
 });
 
 app.listen(PORT, () => {
