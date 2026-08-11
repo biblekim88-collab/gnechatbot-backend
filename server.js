@@ -921,7 +921,102 @@ function saveHqQueryCache(query, data) {
 function hqSearchTokens(query) {
   return (String(query || '').match(/[가-힣A-Za-z0-9]+/g) || [])
     .map(x => x.trim())
-    .filter(x => x.length >= 2 && !/^(관련|업무|문의|담당)$/.test(x));
+    .filter(x => x.length >= 2 && !/^(관련|업무|문의|담당|안내|정보)$/.test(x));
+}
+
+// 민원인에게 직접 연결할 실무 담당자 검색이 목적이므로
+// 기관장/간부/관리자 직위는 업무검색 결과에서 제외합니다.
+// 단, '주무관'은 실무 담당자이므로 절대 제외하지 않습니다.
+function isExcludedHqLeadershipRow(row) {
+  const position = compactText(row && row.position || '');
+  if (!position) return false;
+  if (position.includes('주무관')) return false;
+
+  const excluded = [
+    '교육감', '부교육감', '교육장', '부교육장',
+    '국장', '과장', '단장',
+    '감사관', '담당관', '정책관', '기획관',
+    '사무관', '장학관', '교육연구관', '연구관',
+    '이사관', '부이사관', '서기관'
+  ];
+  return excluded.some(title => position.includes(title));
+}
+
+function hqRowMatchMeta(query, row) {
+  const raw = String(query || '').trim();
+  const whole = compactText(raw);
+  const tokens = hqSearchTokens(raw).map(compactText).filter(Boolean);
+
+  const duty = compactText(row.duty || '');
+  const team = compactText(row.team || '');
+  const dept = compactText(row.department || '');
+  const pos = compactText(row.position || '');
+  const all = `${dept}${team}${pos}${duty}`;
+
+  let score = 0;
+  let matched = false;
+  let exactInDuty = false;
+  let exactInTeam = false;
+  let allTokensInDuty = false;
+  let teamTokenHits = 0;
+  let dutyTokenHits = 0;
+
+  if (whole) {
+    const dutyIdx = duty.indexOf(whole);
+    const teamIdx = team.indexOf(whole);
+    if (teamIdx >= 0) {
+      score += 260;
+      exactInTeam = true;
+      matched = true;
+    }
+    if (dutyIdx >= 0) {
+      score += 220;
+      exactInDuty = true;
+      matched = true;
+      // 담당업무 문장 앞부분에 검색어가 나올수록 '주 업무'일 가능성이 높습니다.
+      if (dutyIdx === 0) score += 95;
+      else if (dutyIdx <= 12) score += 70;
+      else if (dutyIdx <= 35) score += 35;
+      else score += 8;
+    }
+    if (dept.includes(whole)) { score += 100; matched = true; }
+    if (!exactInDuty && !exactInTeam && all.includes(whole)) { score += 55; matched = true; }
+  }
+
+  for (const t of tokens) {
+    let hit = false;
+    if (team.includes(t)) { score += 80; teamTokenHits++; hit = true; }
+    if (duty.includes(t)) { score += 52; dutyTokenHits++; hit = true; }
+    if (!hit && dept.includes(t)) { score += 24; hit = true; }
+    if (!hit && pos.includes(t)) { score += 5; hit = true; }
+    if (hit) matched = true;
+  }
+
+  if (tokens.length) {
+    allTokensInDuty = tokens.every(t => duty.includes(t));
+    const allTokensSomewhere = tokens.every(t => `${dept}${team}${duty}`.includes(t));
+    if (allTokensInDuty) score += 120;
+    else if (allTokensSomewhere) score += 55;
+
+    // 검색 핵심어가 담당명에도 잡히는 행을 우선합니다.
+    if (teamTokenHits > 0) score += 55;
+  }
+
+  // '총괄'은 대표 담당을 찾을 때 강한 신호지만, 검색어 자체가 총괄이 아닐 때만 가점합니다.
+  if (matched && /총괄/.test(duty) && !/총괄/.test(whole)) score += 45;
+
+  // 검색어가 긴데 긴 업무설명 후반에 우연히 한 번 등장한 행은 낮춥니다.
+  if (matched && duty.length > 260 && !exactInTeam && !allTokensInDuty) score -= 25;
+
+  return {
+    score,
+    matched,
+    exactInDuty,
+    exactInTeam,
+    allTokensInDuty,
+    teamTokenHits,
+    dutyTokenHits
+  };
 }
 
 function rankHqContactRows(query, rows) {
@@ -932,41 +1027,38 @@ function rankHqContactRows(query, rows) {
 
   const ranked = [];
   for (const row of (rows || [])) {
-    const duty = compactText(row.duty || '');
-    const team = compactText(row.team || '');
-    const dept = compactText(row.department || '');
-    const pos = compactText(row.position || '');
-    const all = `${dept}${team}${pos}${duty}`;
+    // 과장·사무관·국장·교육감·각종 담당관/장학관 등 간부 전화번호는 표출하지 않습니다.
+    if (isExcludedHqLeadershipRow(row)) continue;
 
-    let score = 0;
-    let matched = false;
-
-    if (whole) {
-      if (duty.includes(whole)) { score += 140; matched = true; }
-      else if (team.includes(whole)) { score += 100; matched = true; }
-      else if (dept.includes(whole)) { score += 80; matched = true; }
-      else if (all.includes(whole)) { score += 60; matched = true; }
-    }
-
-    let tokenHits = 0;
-    for (const token of tokens) {
-      const t = compactText(token);
-      if (!t) continue;
-      if (duty.includes(t)) { score += 35; tokenHits++; matched = true; }
-      else if (team.includes(t)) { score += 25; tokenHits++; matched = true; }
-      else if (dept.includes(t)) { score += 18; tokenHits++; matched = true; }
-      else if (pos.includes(t)) { score += 8; tokenHits++; matched = true; }
-    }
-
-    if (!matched) continue;
-    if (tokens.length > 1 && tokenHits === tokens.length) score += 55;
-    else if (tokens.length > 1 && tokenHits >= Math.ceil(tokens.length / 2)) score += 15;
-
-    ranked.push({ row, score });
+    const meta = hqRowMatchMeta(raw, row);
+    if (!meta.matched || meta.score <= 0) continue;
+    ranked.push({ row, ...meta });
   }
 
-  ranked.sort((a, b) => b.score - a.score || String(a.row.department).localeCompare(String(b.row.department), 'ko'));
-  return ranked.map(x => x.row);
+  ranked.sort((a, b) =>
+    b.score - a.score ||
+    Number(b.exactInTeam) - Number(a.exactInTeam) ||
+    Number(b.exactInDuty) - Number(a.exactInDuty) ||
+    String(a.row.department).localeCompare(String(b.row.department), 'ko')
+  );
+
+  if (!ranked.length) return [];
+
+  const top = ranked[0];
+  const second = ranked[1];
+
+  // 담당명/담당업무가 검색어와 직접 맞고 2위와 차이가 충분하면 대표 담당 1명만 안내합니다.
+  const strongPrimary =
+    top.score >= 300 &&
+    (top.exactInTeam || top.exactInDuty || top.allTokensInDuty) &&
+    (!second || top.score - second.score >= 55);
+  if (strongPrimary) return [top.row];
+
+  // 애매할 때도 '관련 단어가 어딘가에 한 번 포함된 사람'을 전부 보여주지 않고
+  // 최상위 결과와 점수 차가 작은 후보만 남깁니다.
+  const minScore = Math.max(95, top.score - 85);
+  const narrowed = ranked.filter(x => x.score >= minScore);
+  return narrowed.slice(0, 10).map(x => x.row);
 }
 
 function loadPersistedHqContacts() {
