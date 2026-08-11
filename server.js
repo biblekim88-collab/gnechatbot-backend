@@ -952,9 +952,18 @@ function hqRowMatchMeta(query, row) {
   const team = compactText(row.team || '');
   const dept = compactText(row.department || '');
   const pos = compactText(row.position || '');
+  const phone = String(row.phone || '').replace(/\s+/g, '');
   const all = `${dept}${team}${pos}${duty}`;
 
   let score = 0;
+
+  // 운영상 대표 담당 우선순위 보정
+  // 검정고시 문의는 055-268-1135 담당자를 055-268-1134보다 먼저 안내합니다.
+  // 단, 다른 업무 검색에는 영향을 주지 않습니다.
+  if (whole.includes('검정고시')) {
+    if (/1135$/.test(phone)) score += 35;
+    if (/1134$/.test(phone)) score -= 5;
+  }
   let matched = false;
   let exactInDuty = false;
   let exactInTeam = false;
@@ -1235,7 +1244,7 @@ function kakaoHqContactAskResponse() {
         {
           basicCard: {
             title: '경상남도교육청 본청 업무담당자',
-            description: '본청 업무분장 기준으로 담당자를 찾아드립니다.\n예) 검정고시, 청원, 정보공개, 지방공무원 인사\n\n※ 초·중학교 전입학, 학원·교습소 등 지역교육지원청 담당 업무는 해당 교육지원청 누리집의 업무분장을 확인해 주세요.',
+            description: '본청 업무분장 기준으로 담당자를 찾아드립니다.\n예) 다자녀지원, 제증명, 고등학교전학, 검정고시, 직업교육\n\n※ 초·중학교 전입학, 학원·교습소 등 지역교육지원청 담당 업무는 해당 교육지원청 누리집의 업무분장을 확인해 주세요.',
             buttons: [
               { label: '🔎 본청 업무담당자 검색', action: 'webLink', webLinkUrl: `${PUBLIC_BASE_URL}/staff-search` },
               { label: '🏫 지역교육청 안내', action: 'webLink', webLinkUrl: `${PUBLIC_BASE_URL}/staff-search?regional=1` }
@@ -2051,14 +2060,15 @@ app.get('/staff-search', (req, res) => {
     <div class="sub">찾으시는 <b>업무명만</b> 입력해 주세요. ‘담당자’라고 붙이지 않아도 됩니다.<br>경상남도교육청 <b>본청</b> 공식 업무분장 정보를 기준으로 검색합니다.</div>
     <div class="scope"><b>지역 업무는 별도 확인이 필요합니다.</b><br>초·중학교 전입학, 학원·교습소 등 지역교육지원청 담당 업무는 아래 <b>지역교육청 안내</b>에서 해당 교육지원청 누리집의 업무분장을 확인해 주세요.</div>
     <div class="search">
-      <input id="q" type="search" placeholder="예: 지방공무원 인사" autocomplete="off">
+      <input id="q" type="search" placeholder="예: 다자녀지원" autocomplete="off">
       <button id="btn" type="button">검색</button>
     </div>
     <div class="examples">
+      <button class="chip" data-q="다자녀지원">다자녀지원</button>
+      <button class="chip" data-q="제증명">제증명</button>
+      <button class="chip" data-q="고등학교전학">고등학교전학</button>
       <button class="chip" data-q="검정고시">검정고시</button>
-      <button class="chip" data-q="청원">청원</button>
-      <button class="chip" data-q="정보공개">정보공개</button>
-      <button class="chip" data-q="지방공무원 인사">지방공무원 인사</button>
+      <button class="chip" data-q="직업교육">직업교육</button>
     </div>
     <div id="status"></div>
     <div id="results"></div>
@@ -2130,7 +2140,7 @@ app.get('/api/hq-contact', async (req, res) => {
     return res.status(400).json({
       ok: false,
       message: '찾으려는 본청 업무명을 입력해 주세요.',
-      examples: ['청원', '정보공개', '검정고시', '학교급식'],
+      examples: ['다자녀지원', '제증명', '고등학교전학', '검정고시', '직업교육'],
       officialUrl: GNE_HQ_WORK_SEARCH_URL
     });
   }
