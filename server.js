@@ -458,9 +458,9 @@ function firstCallablePhone(text) {
   return m ? m[0].replace(/\s+/g, '') : '';
 }
 
-async function fetchOfficialGneHtml(url) {
+async function fetchOfficialGneHtml(url, timeoutMs = 2800) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 2800);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(url, {
       method: 'GET',
@@ -686,8 +686,11 @@ const GNE_HQ_WORK_SEARCH_URL = 'https://www.gne.go.kr/user/deptBsnsAsgn/BD_searc
 const HQ_CONTACT_FORM_CACHE_TTL_MS = 12 * 60 * 60 * 1000; // 검색 폼 구조 12시간 캐시
 const HQ_CONTACT_QUERY_CACHE_TTL_MS = 30 * 60 * 1000; // 동일 업무검색 결과 30분 캐시
 const HQ_CONTACT_ALL_CACHE_TTL_MS = 30 * 60 * 1000; // 본청 전체 업무분장 30분 캐시
+const HQ_CONTACT_PERSIST_MAX_AGE_MS = 12 * 60 * 60 * 1000; // 최근 성공 조회본은 최대 12시간 안전 캐시
+const HQ_CONTACT_CACHE_FILE = path.join(DATA_DIR, 'hq_contacts_cache.json');
 let GNE_HQ_SEARCH_FORM_CACHE = null;
 let GNE_HQ_ALL_CONTACTS_CACHE = null;
+let GNE_HQ_REFRESH_PROMISE = null;
 const GNE_HQ_QUERY_CACHE = new Map();
 
 function parseHtmlAttrs(tagText) {
@@ -965,19 +968,76 @@ function rankHqContactRows(query, rows) {
   return ranked.map(x => x.row);
 }
 
+function loadPersistedHqContacts() {
+  const saved = readJson(HQ_CONTACT_CACHE_FILE, null);
+  if (!saved || !Array.isArray(saved.rows) || !saved.rows.length) return null;
+  const updatedAt = Number(saved.updatedAt || 0);
+  if (!updatedAt) return null;
+  return { updatedAt, rows: saved.rows };
+}
+
+function savePersistedHqContacts(rows) {
+  try {
+    writeJson(HQ_CONTACT_CACHE_FILE, { updatedAt: Date.now(), rows });
+  } catch (err) {
+    console.error('본청 업무담당자 캐시 저장 오류:', err && err.message ? err.message : err);
+  }
+}
+
+async function refreshGneHqContacts(timeoutMs = 8000) {
+  if (GNE_HQ_REFRESH_PROMISE) return GNE_HQ_REFRESH_PROMISE;
+
+  GNE_HQ_REFRESH_PROMISE = (async () => {
+    const html = await fetchOfficialGneHtml(GNE_HQ_WORK_SEARCH_URL, timeoutMs);
+    const rows = parseGneHqWorkSearchResults(html);
+    if (!rows.length) throw new Error('경남교육청 본청 업무분장 행을 찾지 못했습니다.');
+
+    GNE_HQ_ALL_CONTACTS_CACHE = { updatedAt: Date.now(), rows };
+    GNE_HQ_QUERY_CACHE.clear();
+    savePersistedHqContacts(rows);
+    console.log(`✅ 본청 업무담당자 캐시 갱신 완료: ${rows.length}건`);
+    return rows;
+  })().finally(() => {
+    GNE_HQ_REFRESH_PROMISE = null;
+  });
+
+  return GNE_HQ_REFRESH_PROMISE;
+}
+
 async function getAllGneHqContacts() {
-  if (GNE_HQ_ALL_CONTACTS_CACHE && Date.now() - GNE_HQ_ALL_CONTACTS_CACHE.updatedAt < HQ_CONTACT_ALL_CACHE_TTL_MS) {
+  const now = Date.now();
+
+  // 1) 메모리의 최신 캐시가 있으면 카카오에는 즉시 응답합니다.
+  if (GNE_HQ_ALL_CONTACTS_CACHE && now - GNE_HQ_ALL_CONTACTS_CACHE.updatedAt < HQ_CONTACT_ALL_CACHE_TTL_MS) {
     return GNE_HQ_ALL_CONTACTS_CACHE.rows;
   }
 
-  // 공식 업무검색 페이지는 기본 화면에 본청 전체 업무분장 행을 포함하고 있어
-  // 홈페이지의 검색 버튼/자바스크립트에 의존하지 않고 전체 행을 읽은 뒤 서버에서 검색합니다.
-  const html = await fetchOfficialGneHtml(GNE_HQ_WORK_SEARCH_URL);
-  const rows = parseGneHqWorkSearchResults(html);
-  if (!rows.length) throw new Error('경남교육청 본청 업무분장 행을 찾지 못했습니다.');
+  // 2) Render 재시작 뒤에도 직전 공식 조회본이 남아 있으면 우선 사용합니다.
+  //    카카오 스킬 요청 중에 582건짜리 홈페이지를 매번 내려받지 않도록 하기 위한 안전장치입니다.
+  const persisted = loadPersistedHqContacts();
+  if (persisted && now - persisted.updatedAt < HQ_CONTACT_PERSIST_MAX_AGE_MS) {
+    GNE_HQ_ALL_CONTACTS_CACHE = persisted;
+    // 오래된 캐시(30분 초과)는 사용자 응답과 별개로 백그라운드 갱신합니다.
+    if (now - persisted.updatedAt >= HQ_CONTACT_ALL_CACHE_TTL_MS) {
+      refreshGneHqContacts(8000).catch(err => {
+        console.error('본청 업무담당자 백그라운드 갱신 오류:', err && err.message ? err.message : err);
+      });
+    }
+    return persisted.rows;
+  }
 
-  GNE_HQ_ALL_CONTACTS_CACHE = { updatedAt: Date.now(), rows };
-  return rows;
+  // 3) 캐시가 전혀 없는 최초 1회만 짧게 실시간 조회합니다.
+  //    실패하면 아래의 오래된 성공 캐시가 있을 때만 그 값을 사용합니다.
+  try {
+    return await refreshGneHqContacts(3600);
+  } catch (err) {
+    const stale = persisted || GNE_HQ_ALL_CONTACTS_CACHE;
+    if (stale && Array.isArray(stale.rows) && stale.rows.length) {
+      console.error('본청 업무담당자 실시간 갱신 실패 - 최근 성공 캐시 사용:', err && err.message ? err.message : err);
+      return stale.rows;
+    }
+    throw err;
+  }
 }
 
 async function searchGneHqContacts(query) {
@@ -2093,4 +2153,20 @@ app.listen(PORT, () => {
   if (ADMIN_TOKEN === 'change-me') {
     console.log('⚠ ADMIN_TOKEN 환경변수를 설정하지 않으면 기본값(change-me)이 사용됩니다. 꼭 바꿔주세요.');
   }
+
+  // 카카오 요청이 들어온 뒤 홈페이지 전체(수백 건)를 읽기 시작하면 5초 제한에 걸릴 수 있어
+  // 서버가 뜨자마자 공식 업무분장 정보를 미리 캐시합니다.
+  setTimeout(() => {
+    refreshGneHqContacts(10000).catch(err => {
+      console.error('본청 업무담당자 시작 캐시 오류:', err && err.message ? err.message : err);
+    });
+  }, 300);
+
+  // 실행 중에는 20분마다 백그라운드에서 최신 공식 업무분장으로 갱신합니다.
+  const hqRefreshTimer = setInterval(() => {
+    refreshGneHqContacts(10000).catch(err => {
+      console.error('본청 업무담당자 정기 캐시 오류:', err && err.message ? err.message : err);
+    });
+  }, 20 * 60 * 1000);
+  if (hqRefreshTimer.unref) hqRefreshTimer.unref();
 });
