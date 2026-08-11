@@ -1035,6 +1035,49 @@ function rankHqContactRows(query, rows) {
   const tokens = hqSearchTokens(raw);
   if (!whole && !tokens.length) return [];
 
+  // 0순위: 사용자가 입력한 글자가 업무분장에 그대로 들어 있으면 그 행을 우선 반환합니다.
+  // 예) '위탁교육' → 담당업무에 '위탁 교육'처럼 띄어쓰기가 달라도 compactText 기준으로 일치.
+  // 이렇게 하면 의미 매칭 점수가 낮더라도 공식 업무분장에 검색어가 명시된 담당자를 놓치지 않습니다.
+  if (whole.length >= 2) {
+    const literal = [];
+    for (const row of (rows || [])) {
+      if (isExcludedHqLeadershipRow(row)) continue;
+      const duty = compactText(row && row.duty || '');
+      const team = compactText(row && row.team || '');
+      const dept = compactText(row && row.department || '');
+      const dutyIdx = duty.indexOf(whole);
+      const teamIdx = team.indexOf(whole);
+      const deptIdx = dept.indexOf(whole);
+      if (dutyIdx < 0 && teamIdx < 0 && deptIdx < 0) continue;
+
+      let literalScore = 0;
+      if (teamIdx >= 0) literalScore += 500;
+      if (dutyIdx >= 0) {
+        literalScore += 430;
+        if (dutyIdx === 0) literalScore += 100;
+        else if (dutyIdx <= 12) literalScore += 70;
+        else if (dutyIdx <= 35) literalScore += 35;
+      }
+      if (deptIdx >= 0) literalScore += 180;
+      if (/총괄/.test(duty) && !/총괄/.test(whole)) literalScore += 35;
+
+      // 기존 운영 우선순위(예: 검정고시 1135 우선)도 그대로 반영합니다.
+      const meta = hqRowMatchMeta(raw, row);
+      literalScore += Math.max(0, meta.score);
+      literal.push({ row, score: literalScore, dutyIdx, teamIdx });
+    }
+
+    if (literal.length) {
+      literal.sort((a, b) =>
+        b.score - a.score ||
+        (a.teamIdx < 0 ? 1 : 0) - (b.teamIdx < 0 ? 1 : 0) ||
+        (a.dutyIdx < 0 ? 999999 : a.dutyIdx) - (b.dutyIdx < 0 ? 999999 : b.dutyIdx) ||
+        String(a.row.department).localeCompare(String(b.row.department), 'ko')
+      );
+      return literal.slice(0, 10).map(x => x.row);
+    }
+  }
+
   const ranked = [];
   for (const row of (rows || [])) {
     // 과장·사무관·국장·교육감·각종 담당관/장학관 등 간부 전화번호는 표출하지 않습니다.
