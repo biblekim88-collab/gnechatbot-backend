@@ -2044,11 +2044,65 @@ function trackQuery(query, matchedTitle, matched, source, visitorId) {
 }
 
 function requireAdmin(req, res, next) {
-  const given = (req.header('x-admin-token') || '').trim();
+  // 대시보드 fetch는 헤더로, CSV 다운로드/링크 클릭은 쿼리스트링(?token=)으로 넘어올 수 있어 둘 다 허용합니다.
+  const given = (req.header('x-admin-token') || req.query.token || '').toString().trim();
   if (given !== ADMIN_TOKEN.trim()) {
     return res.status(401).json({ error: '관리자 토큰이 올바르지 않습니다.' });
   }
   next();
+}
+
+// ---- 놓친 질문 그룹핑(빈도순) + CSV 유틸 ----
+// 같은 뜻의 질문이 표현만 조금씩 다르게 5000건까지 쌓이면 관리자가 무엇부터
+// 학습시켜야 할지 알기 어려워, compactText 기준으로 묶어 빈도순으로 보여줍니다.
+function normalizeMissedKey(query) {
+  return compactText(query || '');
+}
+
+function getMissedSummary() {
+  const list = readJson(MISSED_PATH, []);
+  const learned = readJson(LEARNED_PATH, []);
+  const learnedKeys = new Set(learned.map(e => compactText(e.text || '')));
+
+  const groups = new Map();
+  list.forEach(entry => {
+    const key = normalizeMissedKey(entry.query);
+    if (!key) return;
+    if (!groups.has(key)) {
+      groups.set(key, {
+        key,
+        sample: entry.query || '',
+        count: 0,
+        firstSeen: entry.time || '',
+        lastSeen: entry.time || '',
+        bestGuessTitle: entry.bestGuessTitle || '',
+        bestGuessScore: entry.bestGuessScore
+      });
+    }
+    const g = groups.get(key);
+    g.count += 1;
+    if (!g.firstSeen || (entry.time && entry.time < g.firstSeen)) g.firstSeen = entry.time || g.firstSeen;
+    if (!g.lastSeen || (entry.time && entry.time >= g.lastSeen)) {
+      g.lastSeen = entry.time || g.lastSeen;
+      g.bestGuessTitle = entry.bestGuessTitle || g.bestGuessTitle;
+      g.bestGuessScore = entry.bestGuessScore;
+      g.sample = entry.query || g.sample;
+    }
+  });
+
+  const result = [...groups.values()].map(g => ({ ...g, alreadyLearned: learnedKeys.has(g.key) }));
+  result.sort((a, b) => b.count - a.count || String(b.lastSeen).localeCompare(String(a.lastSeen)));
+  return result;
+}
+
+function toCsv(rows, columns) {
+  const escapeCell = v => {
+    const s = v == null ? '' : String(v);
+    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  const header = columns.map(c => escapeCell(c.label)).join(',');
+  const body = (rows || []).map(row => columns.map(c => escapeCell(row[c.key])).join(',')).join('\n');
+  return '\uFEFF' + header + '\n' + body; // BOM: 엑셀에서 한글 깨짐 방지
 }
 
 // ============ 공개 API (누구나 호출 가능) ============
@@ -2409,6 +2463,42 @@ app.delete('/api/admin/missed/:i', requireAdmin, (req, res) => {
   res.json({ status: 'ok' });
 });
 
+// 놓친 질문을 같은 뜻끼리 묶어 빈도순으로 반환 (가장 자주 놓친 질문부터 학습하도록)
+app.get('/api/admin/missed-summary', requireAdmin, (req, res) => {
+  const limit = Math.min(Number(req.query.limit) || 200, 2000);
+  const summary = getMissedSummary();
+  res.json({
+    total: summary.length,
+    totalOccurrences: summary.reduce((s, g) => s + g.count, 0),
+    items: summary.slice(0, limit)
+  });
+});
+
+// 학습 등록 후 해당 그룹(같은 뜻으로 묶인 질문들)을 놓친 목록에서 한 번에 정리
+app.delete('/api/admin/missed-summary/:key', requireAdmin, (req, res) => {
+  const key = req.params.key;
+  const list = readJson(MISSED_PATH, []);
+  const filtered = list.filter(e => normalizeMissedKey(e.query) !== key);
+  writeJson(MISSED_PATH, filtered);
+  res.json({ status: 'ok', removed: list.length - filtered.length });
+});
+
+app.get('/api/admin/missed.csv', requireAdmin, (req, res) => {
+  const summary = getMissedSummary();
+  const csv = toCsv(summary, [
+    { key: 'sample', label: '질문' },
+    { key: 'count', label: '횟수' },
+    { key: 'bestGuessTitle', label: '추정 항목' },
+    { key: 'bestGuessScore', label: '추정 점수' },
+    { key: 'alreadyLearned', label: '학습됨' },
+    { key: 'firstSeen', label: '최초발생' },
+    { key: 'lastSeen', label: '최근발생' }
+  ]);
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="missed-summary.csv"');
+  res.send(csv);
+});
+
 // 사용 통계: 인기 질문, 일별 추이, 매칭 성공률, 순방문자
 app.get('/api/admin/stats', requireAdmin, (req, res) => {
   const list = readJson(QUERIES_PATH, []);
@@ -2454,14 +2544,35 @@ app.delete('/api/admin/stats', requireAdmin, (req, res) => {
   res.json({ status: 'ok' });
 });
 
+app.get('/api/admin/stats/top.csv', requireAdmin, (req, res) => {
+  const list = readJson(QUERIES_PATH, []);
+  const byTitle = {};
+  list.forEach(e => { if (e.matched && e.matchedTitle) byTitle[e.matchedTitle] = (byTitle[e.matchedTitle]||0)+1; });
+  const rows = Object.entries(byTitle).sort((a,b)=>b[1]-a[1]).map(([title,count])=>({title,count}));
+  const csv = toCsv(rows, [{ key: 'title', label: '항목' }, { key: 'count', label: '건수' }]);
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="top-questions.csv"');
+  res.send(csv);
+});
+
+// 시나리오 블록 idx/제목 목록 (관리자 대시보드에서 '학습 등록' 시 드롭다운으로 사용)
+app.get('/api/admin/blocks', requireAdmin, (req, res) => {
+  res.json(BLOCKS.map((b, idx) => ({ idx, title: b.title })));
+});
+
 app.post('/api/learn', requireAdmin, (req, res) => {
-  const { text, blockIdx } = req.body || {};
+  const { text, blockTitle } = req.body || {};
+  let { blockIdx } = req.body || {};
+  if (blockIdx == null && blockTitle) {
+    const found = BLOCKS.findIndex(b => b.title === blockTitle);
+    if (found >= 0) blockIdx = found;
+  }
   if (!text || blockIdx == null || !BLOCKS[blockIdx]) {
-    return res.status(400).json({ error: 'text와 유효한 blockIdx가 필요합니다.' });
+    return res.status(400).json({ error: 'text와 유효한 blockIdx(또는 blockTitle)가 필요합니다.' });
   }
   const list = readJson(LEARNED_PATH, []);
   if (!list.some(e => e.text === text && e.blockIdx === blockIdx)) {
-    list.push({ text, blockIdx, time: new Date().toISOString() });
+    list.push({ text, blockIdx, blockTitle: BLOCKS[blockIdx].title, time: new Date().toISOString() });
     writeJson(LEARNED_PATH, list);
   }
   res.json({ status: 'ok', list });
@@ -2472,6 +2583,188 @@ app.delete('/api/learn/:i', requireAdmin, (req, res) => {
   if (i>=0 && i<list.length) list.splice(i,1);
   writeJson(LEARNED_PATH, list);
   res.json({ status: 'ok' });
+});
+
+// 관리자 대시보드: 통계 / 놓친 질문(빈도순) / 학습 표현 관리를 한 화면에서
+app.get('/admin', (req, res) => {
+  res.type('html').send(`<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>1004챗봇 관리자</title>
+<style>
+  *{box-sizing:border-box} body{margin:0;background:#f4f6f8;font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",sans-serif;color:#222}
+  .wrap{max-width:960px;margin:0 auto;padding:18px 14px 60px}
+  h1{font-size:20px;margin:0 0 14px}
+  .card{background:#fff;border-radius:16px;padding:18px;box-shadow:0 2px 12px rgba(0,0,0,.06);margin-bottom:16px}
+  .card h2{font-size:16px;margin:0 0 12px;display:flex;align-items:center;justify-content:space-between;gap:8px}
+  .row{display:flex;gap:8px;flex-wrap:wrap}
+  input,select,button{font-size:14px;font-family:inherit}
+  input[type=password],input[type=text]{height:42px;border:1px solid #cfd6dd;border-radius:9px;padding:0 12px;outline:none}
+  button{height:42px;border:0;border-radius:9px;padding:0 15px;font-weight:700;background:#fee500;color:#191919;cursor:pointer}
+  button.ghost{background:#eef2f6;color:#333}
+  button.danger{background:#fde8e8;color:#b02a2a}
+  .summary4{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+  @media(min-width:600px){.summary4{grid-template-columns:repeat(4,1fr)}}
+  .stat{background:#f7f9fb;border-radius:12px;padding:12px}
+  .stat .n{font-size:22px;font-weight:800}.stat .l{font-size:12px;color:#777;margin-top:2px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{text-align:left;padding:8px 6px;border-bottom:1px solid #eef1f4;vertical-align:top}
+  th{color:#777;font-weight:700}
+  .muted{color:#999}.small{font-size:12px}
+  .badge{display:inline-block;background:#e8f3ff;color:#1b5dbf;border-radius:999px;padding:2px 8px;font-size:11px;font-weight:700}
+  .badge.ok{background:#e9f8ee;color:#1c8a45}
+  .gap{margin-top:10px}
+  #gate{max-width:360px;margin:60px auto}
+  a.dl{font-size:12px;color:#1b5dbf;text-decoration:none;font-weight:700}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div id="gate" class="card">
+    <h1>관리자 로그인</h1>
+    <div class="row">
+      <input id="token" type="password" placeholder="관리자 토큰(ADMIN_TOKEN)" style="flex:1">
+      <button id="loginBtn">확인</button>
+    </div>
+    <div id="loginMsg" class="small muted gap"></div>
+  </div>
+
+  <div id="dash" style="display:none">
+    <h1>1004챗봇 관리자 대시보드 <button class="ghost" id="logoutBtn" style="height:32px;padding:0 10px;font-size:12px">로그아웃</button></h1>
+
+    <div class="card">
+      <h2>전체 통계 <button class="ghost" id="refreshBtn" style="height:32px;padding:0 10px;font-size:12px">새로고침</button></h2>
+      <div class="summary4" id="summary4"></div>
+      <div class="gap small muted" id="statsMeta"></div>
+      <div class="gap"><b class="small">인기 질문 TOP</b> <a class="dl" id="topCsv" href="#">CSV 다운로드</a></div>
+      <table id="topTable"><thead><tr><th>항목</th><th>건수</th></tr></thead><tbody></tbody></table>
+    </div>
+
+    <div class="card">
+      <h2>놓친 질문 (빈도순) <a class="dl" id="missedCsv" href="#">CSV 다운로드</a></h2>
+      <div class="small muted">같은 뜻으로 보이는 질문은 하나로 묶어서 보여줘요. 자주 놓친 질문부터 학습시키는 걸 추천해요.</div>
+      <table id="missedTable"><thead><tr><th>질문</th><th>횟수</th><th>추정 항목</th><th>학습 등록</th></tr></thead><tbody></tbody></table>
+    </div>
+
+    <div class="card">
+      <h2>학습된 표현</h2>
+      <table id="learnedTable"><thead><tr><th>등록한 문장</th><th>연결된 항목</th><th></th></tr></thead><tbody></tbody></table>
+    </div>
+  </div>
+</div>
+<script>
+function esc(v){return String(v??'').replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));}
+let TOKEN = sessionStorage.getItem('adminToken') || '';
+let BLOCKS = [];
+
+async function api(path, opts){
+  opts = opts || {};
+  opts.headers = Object.assign({'x-admin-token': TOKEN, 'Content-Type':'application/json'}, opts.headers||{});
+  const r = await fetch(path, opts);
+  if (r.status === 401) { logout('토큰이 올바르지 않아요.'); throw new Error('unauthorized'); }
+  return r.json();
+}
+
+function logout(msg){
+  TOKEN=''; sessionStorage.removeItem('adminToken');
+  document.getElementById('dash').style.display='none';
+  document.getElementById('gate').style.display='block';
+  document.getElementById('loginMsg').textContent = msg || '';
+}
+
+async function login(){
+  const t = document.getElementById('token').value.trim();
+  if (!t) return;
+  TOKEN = t;
+  try {
+    await api('/api/admin/blocks');
+    sessionStorage.setItem('adminToken', TOKEN);
+    document.getElementById('gate').style.display='none';
+    document.getElementById('dash').style.display='block';
+    loadAll();
+  } catch(e) {
+    document.getElementById('loginMsg').textContent = '토큰이 올바르지 않아요. 다시 확인해 주세요.';
+  }
+}
+
+async function loadAll(){
+  document.getElementById('topCsv').href = '/api/admin/stats/top.csv?token=' + encodeURIComponent(TOKEN);
+  document.getElementById('missedCsv').href = '/api/admin/missed.csv?token=' + encodeURIComponent(TOKEN);
+  BLOCKS = await api('/api/admin/blocks');
+  await Promise.all([loadStats(), loadMissed(), loadLearned()]);
+}
+
+async function loadStats(){
+  const s = await api('/api/admin/stats');
+  document.getElementById('summary4').innerHTML = [
+    ['전체 질문', s.total],
+    ['매칭률', s.matchRate + '%'],
+    ['순방문자', s.uniqueVisitors],
+    ['1인당 평균 질문', s.avgQueriesPerVisitor]
+  ].map(([l,n])=>'<div class="stat"><div class="n">'+esc(n)+'</div><div class="l">'+esc(l)+'</div></div>').join('');
+  document.getElementById('statsMeta').textContent = '매칭 ' + s.matchedCount + '건 / 미매칭 ' + s.unmatchedCount + '건';
+  document.querySelector('#topTable tbody').innerHTML = (s.topBlocks||[]).map(b=>
+    '<tr><td>'+esc(b.title)+'</td><td>'+esc(b.count)+'</td></tr>'
+  ).join('') || '<tr><td colspan="2" class="muted">데이터가 없어요.</td></tr>';
+}
+
+async function loadMissed(){
+  const d = await api('/api/admin/missed-summary?limit=100');
+  const options = '<option value="">항목 선택…</option>' + BLOCKS.map(b=>'<option value="'+b.idx+'">'+esc(b.title)+'</option>').join('');
+  document.querySelector('#missedTable tbody').innerHTML = (d.items||[]).map(g=>{
+    const learnedBadge = g.alreadyLearned ? ' <span class="badge ok">학습됨</span>' : '';
+    return '<tr>'+
+      '<td>'+esc(g.sample)+learnedBadge+'</td>'+
+      '<td>'+esc(g.count)+'</td>'+
+      '<td class="small muted">'+esc(g.bestGuessTitle||'-')+'</td>'+
+      '<td><div class="row">'+
+        '<select data-key="'+esc(g.key)+'" data-text="'+esc(g.sample)+'" class="teachSelect">'+options+'</select>'+
+        '<button class="ghost teachBtn" style="height:36px;padding:0 10px;font-size:12px" data-key="'+esc(g.key)+'" data-text="'+esc(g.sample)+'">학습</button>'+
+      '</div></td>'+
+    '</tr>';
+  }).join('') || '<tr><td colspan="4" class="muted">놓친 질문이 없어요.</td></tr>';
+
+  document.querySelectorAll('.teachBtn').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const sel = document.querySelector('select[data-key="'+btn.dataset.key+'"]');
+      const blockIdx = sel.value;
+      if (!blockIdx) { sel.focus(); return; }
+      btn.disabled = true;
+      try{
+        await api('/api/learn', { method:'POST', body: JSON.stringify({ text: btn.dataset.text, blockIdx: Number(blockIdx) }) });
+        await api('/api/admin/missed-summary/'+encodeURIComponent(btn.dataset.key), { method:'DELETE' });
+        await Promise.all([loadMissed(), loadLearned()]);
+      } finally { btn.disabled = false; }
+    });
+  });
+}
+
+async function loadLearned(){
+  const list = await api('/api/learned');
+  document.querySelector('#learnedTable tbody').innerHTML = (list||[]).map((e,i)=>
+    '<tr><td>'+esc(e.text)+'</td><td class="small muted">'+esc(e.blockTitle || (BLOCKS[e.blockIdx]||{}).title || ('#'+e.blockIdx))+'</td>'+
+    '<td><button class="danger delLearn" style="height:32px;padding:0 10px;font-size:12px" data-i="'+i+'">삭제</button></td></tr>'
+  ).join('') || '<tr><td colspan="3" class="muted">등록된 학습 표현이 없어요.</td></tr>';
+
+  document.querySelectorAll('.delLearn').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      btn.disabled = true;
+      try { await api('/api/learn/'+btn.dataset.i, { method:'DELETE' }); await loadLearned(); }
+      finally { btn.disabled = false; }
+    });
+  });
+}
+
+document.getElementById('loginBtn').addEventListener('click', login);
+document.getElementById('token').addEventListener('keydown', e=>{ if(e.key==='Enter') login(); });
+document.getElementById('logoutBtn').addEventListener('click', ()=>logout(''));
+document.getElementById('refreshBtn').addEventListener('click', loadAll);
+
+if (TOKEN) { document.getElementById('token').value=''; login(); }
+</script>
+</body></html>`);
 });
 
 app.get('/', (req, res) => {
