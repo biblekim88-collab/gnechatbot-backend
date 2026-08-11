@@ -1235,9 +1235,10 @@ function kakaoHqContactAskResponse() {
         {
           basicCard: {
             title: '경상남도교육청 본청 업무담당자',
-            description: '아래 검색창에서 업무명을 입력하면 최신 업무분장 정보에서 담당자를 찾아드립니다.\n예) 검정고시, 청원, 정보공개, 지방공무원 인사',
+            description: '본청 업무분장 기준으로 담당자를 찾아드립니다.\n예) 검정고시, 청원, 정보공개, 지방공무원 인사\n\n※ 초·중학교 전입학, 학원·교습소 등 지역교육지원청 담당 업무는 해당 교육지원청 누리집의 업무분장을 확인해 주세요.',
             buttons: [
-              { label: '🔎 업무담당자 검색', action: 'webLink', webLinkUrl: `${PUBLIC_BASE_URL}/staff-search` }
+              { label: '🔎 본청 업무담당자 검색', action: 'webLink', webLinkUrl: `${PUBLIC_BASE_URL}/staff-search` },
+              { label: '🏫 지역교육청 안내', action: 'webLink', webLinkUrl: `${PUBLIC_BASE_URL}/staff-search?regional=1` }
             ]
           }
         }
@@ -1264,7 +1265,8 @@ function kakaoHqContactResponseText(query, contacts) {
     lines.push(`※ 검색 결과가 ${contacts.length}건이라 상위 ${limited.length}건만 표시했어요. 업무명을 더 구체적으로 입력하면 범위를 줄일 수 있어요.`);
   }
   lines.push('');
-  lines.push('※ 경상남도교육청 공식 업무분장 정보를 조회해 안내한 결과입니다.');
+  lines.push('※ 경상남도교육청 본청 공식 업무분장 정보를 조회해 안내한 결과입니다.');
+  lines.push('※ 초·중학교 전입학, 학원·교습소 등 지역교육지원청 담당 업무는 해당 교육지원청 누리집의 업무분장을 확인해 주세요.');
   return lines.join('\n').slice(0, 980);
 }
 
@@ -2028,20 +2030,26 @@ app.get('/staff-search', (req, res) => {
   *{box-sizing:border-box} body{margin:0;background:#f4f6f8;font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",sans-serif;color:#222}
   .wrap{max-width:720px;margin:0 auto;padding:18px 14px 40px}
   .card{background:#fff;border-radius:16px;padding:18px;box-shadow:0 2px 12px rgba(0,0,0,.06)}
-  h1{font-size:20px;margin:0 0 6px}.sub{font-size:14px;line-height:1.55;color:#666;margin-bottom:16px}
+  h1{font-size:20px;margin:0 0 6px}.sub{font-size:14px;line-height:1.6;color:#666;margin-bottom:14px}
+  .scope{background:#fff7cc;border:1px solid #ffe36b;border-radius:12px;padding:11px 12px;font-size:13px;line-height:1.55;color:#554700;margin-bottom:15px}
   .search{display:flex;gap:8px}.search input{flex:1;min-width:0;height:46px;border:1px solid #cfd6dd;border-radius:10px;padding:0 13px;font-size:16px;outline:none}.search input:focus{border-color:#777}
-  .search button{height:46px;border:0;border-radius:10px;padding:0 17px;font-size:15px;font-weight:700;background:#fee500;color:#191919;cursor:pointer}
+  .search button,.region-toggle{height:46px;border:0;border-radius:10px;padding:0 17px;font-size:15px;font-weight:700;background:#fee500;color:#191919;cursor:pointer}
+  .region-toggle{width:100%;margin-top:12px;background:#eef2f6}
   .examples{display:flex;gap:7px;flex-wrap:wrap;margin-top:12px}.chip{border:1px solid #e1e5e9;background:#fff;border-radius:999px;padding:7px 10px;font-size:13px;cursor:pointer}
+  #regionBox{display:none;margin-top:12px;padding-top:13px;border-top:1px solid #edf0f2}.region-title{font-size:14px;font-weight:800;margin-bottom:4px}.region-help{font-size:12px;line-height:1.5;color:#777;margin-bottom:10px}
+  .regions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.region-link{display:block;text-decoration:none;text-align:center;border:1px solid #dfe4e8;background:#fff;border-radius:10px;padding:10px 7px;color:#222;font-size:13px;font-weight:700}
   #status{font-size:14px;color:#666;margin:16px 2px 8px}.result{background:#fff;border-radius:14px;padding:15px 16px;margin-top:10px;box-shadow:0 1px 8px rgba(0,0,0,.05)}
   .dept{font-weight:800;font-size:16px;margin-bottom:6px}.phone{display:inline-block;margin:2px 0 8px;font-weight:700;color:#1b5dbf;text-decoration:none}.duty{font-size:14px;line-height:1.55;white-space:pre-wrap;color:#444}
-  .notice{font-size:12px;line-height:1.5;color:#777;margin-top:16px}.empty{background:#fff;border-radius:14px;padding:18px;margin-top:10px;color:#555}
+  .notice{font-size:12px;line-height:1.55;color:#777;margin-top:16px}.empty{background:#fff;border-radius:14px;padding:18px;margin-top:10px;color:#555}
+  @media(min-width:560px){.regions{grid-template-columns:repeat(3,minmax(0,1fr))}}
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="card">
     <h1>본청 업무담당자 검색</h1>
-    <div class="sub">찾으시는 <b>업무명만</b> 입력해 주세요. ‘담당자’라고 붙이지 않아도 됩니다.<br>경상남도교육청 공식 업무분장 정보를 기준으로 검색합니다.</div>
+    <div class="sub">찾으시는 <b>업무명만</b> 입력해 주세요. ‘담당자’라고 붙이지 않아도 됩니다.<br>경상남도교육청 <b>본청</b> 공식 업무분장 정보를 기준으로 검색합니다.</div>
+    <div class="scope"><b>지역 업무는 별도 확인이 필요합니다.</b><br>초·중학교 전입학, 학원·교습소 등 지역교육지원청 담당 업무는 아래 <b>지역교육청 안내</b>에서 해당 교육지원청 누리집의 업무분장을 확인해 주세요.</div>
     <div class="search">
       <input id="q" type="search" placeholder="예: 지방공무원 인사" autocomplete="off">
       <button id="btn" type="button">검색</button>
@@ -2052,15 +2060,44 @@ app.get('/staff-search', (req, res) => {
       <button class="chip" data-q="정보공개">정보공개</button>
       <button class="chip" data-q="지방공무원 인사">지방공무원 인사</button>
     </div>
+    <button id="regionToggle" class="region-toggle" type="button">🏫 지역교육청 안내 보기</button>
+    <div id="regionBox">
+      <div class="region-title">지역교육지원청 누리집</div>
+      <div class="region-help">지역을 선택한 뒤 해당 교육지원청의 조직·업무안내(업무분장)를 확인해 주세요.</div>
+      <div class="regions">
+        <a class="region-link" href="https://cwedu.gne.go.kr/" target="_blank" rel="noopener">창원</a>
+        <a class="region-link" href="https://jjedu.gne.go.kr/" target="_blank" rel="noopener">진주</a>
+        <a class="region-link" href="https://tyedu.gne.go.kr/" target="_blank" rel="noopener">통영</a>
+        <a class="region-link" href="https://scedu.gne.go.kr/" target="_blank" rel="noopener">사천</a>
+        <a class="region-link" href="https://ghedu.gne.go.kr/" target="_blank" rel="noopener">김해</a>
+        <a class="region-link" href="https://myedu.gne.go.kr/" target="_blank" rel="noopener">밀양</a>
+        <a class="region-link" href="https://gjedu.gne.go.kr/" target="_blank" rel="noopener">거제</a>
+        <a class="region-link" href="https://ysedu.gne.go.kr/" target="_blank" rel="noopener">양산</a>
+        <a class="region-link" href="https://uredu.gne.go.kr/" target="_blank" rel="noopener">의령</a>
+        <a class="region-link" href="https://hmedu.gne.go.kr/" target="_blank" rel="noopener">함안</a>
+        <a class="region-link" href="https://cnedu.gne.go.kr/" target="_blank" rel="noopener">창녕</a>
+        <a class="region-link" href="https://gsedu.gne.go.kr/" target="_blank" rel="noopener">고성</a>
+        <a class="region-link" href="https://nhedu.gne.go.kr/" target="_blank" rel="noopener">남해</a>
+        <a class="region-link" href="https://hdedu.gne.go.kr/" target="_blank" rel="noopener">하동</a>
+        <a class="region-link" href="https://schedu.gne.go.kr/" target="_blank" rel="noopener">산청</a>
+        <a class="region-link" href="https://hyedu.gne.go.kr/" target="_blank" rel="noopener">함양</a>
+        <a class="region-link" href="https://gcedu.gne.go.kr/" target="_blank" rel="noopener">거창</a>
+        <a class="region-link" href="https://hcedu.gne.go.kr/" target="_blank" rel="noopener">합천</a>
+      </div>
+    </div>
   </div>
   <div id="status"></div>
   <div id="results"></div>
-  <div class="notice">※ 교육감·부교육감·국장·과장·사무관 등 관리·총괄 직위는 검색 결과에서 제외하고 실무담당자를 우선 안내합니다. 조직개편·인사이동 직후에는 공식 누리집 정보 반영 시점에 따라 차이가 있을 수 있습니다.</div>
+  <div class="notice">※ 교육감·부교육감·국장·과장·사무관 등 관리·총괄 직위는 검색 결과에서 제외하고 실무담당자를 우선 안내합니다.<br>※ 이 검색은 경상남도교육청 <b>본청 업무분장</b> 기준입니다. 지역교육지원청 소관 업무는 해당 교육지원청 누리집을 확인해 주세요.</div>
 </div>
 <script>
 const q=document.getElementById('q'), btn=document.getElementById('btn'), status=document.getElementById('status'), results=document.getElementById('results');
+const regionToggle=document.getElementById('regionToggle'), regionBox=document.getElementById('regionBox');
 function esc(v){return String(v??'').replace(/[&<>\"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[m]));}
 function tel(v){const m=String(v||'').match(/0\d{1,2}-\d{3,4}-\d{4}/);return m?m[0]:'';}
+function setRegion(open){regionBox.style.display=open?'block':'none';regionToggle.textContent=open?'🏫 지역교육청 안내 닫기':'🏫 지역교육청 안내 보기';}
+regionToggle.addEventListener('click',()=>setRegion(regionBox.style.display!=='block'));
+if(new URLSearchParams(location.search).get('regional')==='1'){setRegion(true);setTimeout(()=>regionBox.scrollIntoView({behavior:'smooth',block:'start'}),100);}
 async function search(){
   const query=q.value.trim();
   if(!query){q.focus();return;}
@@ -2071,7 +2108,7 @@ async function search(){
     if(!r.ok||!d.ok) throw new Error(d.message||'검색에 실패했습니다.');
     const list=Array.isArray(d.contacts)?d.contacts:[];
     status.textContent="'"+query+"' 검색 결과 "+list.length+"건";
-    if(!list.length){results.innerHTML='<div class="empty">관련 실무담당자를 찾지 못했습니다. 업무명을 조금 더 구체적으로 입력해 주세요.</div>';return;}
+    if(!list.length){results.innerHTML='<div class="empty">본청 관련 실무담당자를 찾지 못했습니다. 지역교육지원청 소관 업무라면 위의 <b>지역교육청 안내</b>를 이용해 주세요.</div>';return;}
     results.innerHTML=list.slice(0,5).map(c=>{
       const p=tel(c.phone), phone=p?'<a class="phone" href="tel:'+p.replace(/-/g,'')+'">☎ '+esc(p)+'</a>':'<div class="phone">☎ '+esc(c.phone||'')+'</div>';
       return '<div class="result"><div class="dept">'+esc(c.department||'')+(c.team?' / '+esc(c.team):'')+'</div>'+phone+'<div class="duty">'+esc(c.duty||'')+'</div></div>';
