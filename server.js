@@ -19,6 +19,16 @@ const PORT = process.env.PORT || 3000;
 const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || 'https://gnechatbot-backend.onrender.com').replace(/\/$/, '');
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || 'change-me';
 
+// Render Free 안정화 옵션
+// - Free 인스턴스는 유휴 상태에서 잠들 수 있으므로, 필요할 때만 환경변수로 keep-warm을 켤 수 있습니다.
+// - KEEP_WARM_ENABLED=true 로 설정하면 약 12분마다 공개 health URL을 가볍게 호출합니다.
+// - Render가 보장하는 기능은 아니며, 무료 인스턴스 시간/트래픽 한도는 별도로 적용됩니다.
+const KEEP_WARM_ENABLED = /^(1|true|yes|on)$/i.test(String(process.env.KEEP_WARM_ENABLED || '').trim());
+const KEEP_WARM_INTERVAL_MS = Math.max(
+  8 * 60 * 1000,
+  Number(process.env.KEEP_WARM_INTERVAL_MS || 12 * 60 * 1000) || 12 * 60 * 1000
+);
+
 const DATA_DIR = path.join(__dirname, 'data');
 const SCENARIOS_PATH = path.join(DATA_DIR, 'scenarios.json');
 const LEARNED_PATH = path.join(DATA_DIR, 'learned.json');
@@ -2866,6 +2876,67 @@ if (TOKEN) { document.getElementById('token').value=''; login(); }
 </body></html>`);
 });
 
+// Render/외부 모니터에서 가장 가볍게 확인할 수 있는 상태 확인 URL입니다.
+// 업무분장 조회나 AI 호출을 전혀 하지 않아 빠르게 200 응답만 반환합니다.
+app.get('/healthz', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.status(200).json({ ok: true, service: 'gne-minwon-chatbot', ts: Date.now() });
+});
+
+function waitMs(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// Render가 막 깨어난 직후 공식 업무분장 홈페이지가 잠깐 느려도
+// 1회 실패로 끝내지 않고 백그라운드에서 몇 차례 재시도합니다.
+async function warmHqContactsWithRetry() {
+  const delays = [0, 2500, 7000];
+  let lastErr = null;
+  for (let i = 0; i < delays.length; i++) {
+    if (delays[i]) await waitMs(delays[i]);
+    try {
+      const rows = await refreshGneHqContacts(12000);
+      console.log(`✅ 본청 업무담당자 시작 캐시 준비 완료: ${Array.isArray(rows) ? rows.length : 0}건 (시도 ${i + 1}/${delays.length})`);
+      return rows;
+    } catch (err) {
+      lastErr = err;
+      console.error(`본청 업무담당자 시작 캐시 재시도 ${i + 1}/${delays.length} 실패:`, err && err.message ? err.message : err);
+    }
+  }
+  throw lastErr || new Error('본청 업무담당자 시작 캐시 준비 실패');
+}
+
+function startRenderKeepWarm() {
+  if (!KEEP_WARM_ENABLED) {
+    console.log('ℹ Render keep-warm 비활성화 (KEEP_WARM_ENABLED=true 로 활성화 가능)');
+    return;
+  }
+
+  const healthUrl = `${PUBLIC_BASE_URL}/healthz`;
+  console.log(`✅ Render keep-warm 활성화: 약 ${Math.round(KEEP_WARM_INTERVAL_MS / 60000)}분 간격 → ${healthUrl}`);
+
+  const ping = async () => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 7000);
+    try {
+      const response = await fetch(healthUrl, {
+        method: 'GET',
+        signal: controller.signal,
+        headers: { 'user-agent': 'GNE-1004-Render-KeepWarm/1.0' }
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    } catch (err) {
+      console.error('Render keep-warm 호출 실패:', err && err.message ? err.message : err);
+    } finally {
+      clearTimeout(timeout);
+    }
+  };
+
+  // 첫 호출은 12분 뒤에 하므로 서버 시작 직후 불필요한 추가 요청은 만들지 않습니다.
+  const timer = setInterval(ping, KEEP_WARM_INTERVAL_MS);
+  if (timer.unref) timer.unref();
+}
+
 app.get('/', (req, res) => {
   res.send('경상남도교육청 민원 챗봇 백엔드가 정상적으로 실행 중입니다.');
 });
@@ -2877,12 +2948,15 @@ app.listen(PORT, () => {
   }
 
   // 카카오 요청이 들어온 뒤 홈페이지 전체(수백 건)를 읽기 시작하면 5초 제한에 걸릴 수 있어
-  // 서버가 뜨자마자 공식 업무분장 정보를 미리 캐시합니다.
+  // 서버가 뜨자마자 백그라운드에서 공식 업무분장을 준비하고, 일시 오류 시 자동 재시도합니다.
   setTimeout(() => {
-    refreshGneHqContacts(10000).catch(err => {
-      console.error('본청 업무담당자 시작 캐시 오류:', err && err.message ? err.message : err);
+    warmHqContactsWithRetry().catch(err => {
+      console.error('본청 업무담당자 시작 캐시 최종 실패:', err && err.message ? err.message : err);
     });
-  }, 300);
+  }, 250);
+
+  // 무료 Render에서 유휴 종료를 줄이고 싶을 때만 환경변수로 선택적으로 켭니다.
+  startRenderKeepWarm();
 
   // 실행 중에는 20분마다 백그라운드에서 최신 공식 업무분장으로 갱신합니다.
   const hqRefreshTimer = setInterval(() => {
