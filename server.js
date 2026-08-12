@@ -2722,6 +2722,51 @@ app.get('/api/admin/missed.csv', requireAdmin, (req, res) => {
   res.send(csv);
 });
 
+// 통계 날짜는 한국시간(KST) 기준으로 집계합니다.
+// 질문 저장 시간은 ISO(UTC)라서 단순히 앞 10자리를 자르면 자정 전후 통계가 하루씩 어긋날 수 있습니다.
+function toKstDateKey(isoTime) {
+  if (!isoTime) return '';
+  const t = Date.parse(isoTime);
+  if (!Number.isFinite(t)) return '';
+  return new Date(t + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
+function buildDailyStats(list, limit) {
+  const byDay = {};
+  (list || []).forEach(e => {
+    const d = toKstDateKey(e.time);
+    if (!d) return;
+    if (!byDay[d]) {
+      byDay[d] = {
+        date: d,
+        total: 0,
+        matchedCount: 0,
+        unmatchedCount: 0,
+        visitors: new Set()
+      };
+    }
+    const g = byDay[d];
+    g.total += 1;
+    if (e.matched) g.matchedCount += 1;
+    else g.unmatchedCount += 1;
+    if (e.visitorId) g.visitors.add(e.visitorId);
+  });
+
+  let keys = Object.keys(byDay).sort();
+  if (limit && Number(limit) > 0) keys = keys.slice(-Number(limit));
+  return keys.reverse().map(d => {
+    const g = byDay[d];
+    return {
+      date: d,
+      total: g.total,
+      matchedCount: g.matchedCount,
+      unmatchedCount: g.unmatchedCount,
+      matchRate: g.total ? Number((g.matchedCount / g.total * 100).toFixed(1)) : 0,
+      uniqueVisitors: g.visitors.size
+    };
+  });
+}
+
 // 사용 통계: 인기 질문, 일별 추이, 매칭 성공률, 순방문자
 app.get('/api/admin/stats', requireAdmin, (req, res) => {
   const list = readJson(QUERIES_PATH, []);
@@ -2732,20 +2777,9 @@ app.get('/api/admin/stats', requireAdmin, (req, res) => {
   list.forEach(e => { if (e.matched && e.matchedTitle) byTitle[e.matchedTitle] = (byTitle[e.matchedTitle]||0)+1; });
   const topBlocks = Object.entries(byTitle).sort((a,b)=>b[1]-a[1]).slice(0,15).map(([title,count])=>({title,count}));
 
-  const byDayCount = {};
-  const byDayVisitors = {}; // date -> Set(visitorId)
-  list.forEach(e => {
-    const d = (e.time||'').slice(0,10);
-    if (!d) return;
-    byDayCount[d] = (byDayCount[d]||0)+1;
-    if (e.visitorId) {
-      if (!byDayVisitors[d]) byDayVisitors[d] = new Set();
-      byDayVisitors[d].add(e.visitorId);
-    }
-  });
-  const days = Object.keys(byDayCount).sort().slice(-14).map(d => ({
-    date: d, count: byDayCount[d], uniqueVisitors: byDayVisitors[d] ? byDayVisitors[d].size : 0
-  }));
+  // 관리자 화면에서는 최근 31개 '이용일'을 보여줍니다.
+  // (질문이 한 건도 없었던 날은 행을 만들지 않음)
+  const days = buildDailyStats(list, 31);
 
   const bySource = {};
   list.forEach(e => { const s = e.source||'unknown'; bySource[s] = (bySource[s]||0)+1; });
@@ -2776,6 +2810,23 @@ app.get('/api/admin/stats/top.csv', requireAdmin, (req, res) => {
   const csv = toCsv(rows, [{ key: 'title', label: '항목' }, { key: 'count', label: '건수' }]);
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', 'attachment; filename="top-questions.csv"');
+  res.send(csv);
+});
+
+app.get('/api/admin/stats/daily.csv', requireAdmin, (req, res) => {
+  const list = readJson(QUERIES_PATH, []);
+  // CSV는 저장되어 있는 전체 일별 통계를 내려받습니다.
+  const rows = buildDailyStats(list, 0);
+  const csv = toCsv(rows, [
+    { key: 'date', label: '일자(KST)' },
+    { key: 'total', label: '질문수' },
+    { key: 'uniqueVisitors', label: '순방문자' },
+    { key: 'matchedCount', label: '매칭' },
+    { key: 'unmatchedCount', label: '미매칭' },
+    { key: 'matchRate', label: '매칭률(%)' }
+  ]);
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="daily-stats.csv"');
   res.send(csv);
 });
 
@@ -2867,6 +2918,17 @@ app.get('/admin', (req, res) => {
     </div>
 
     <div class="card">
+      <h2>일별 통계 (최근 31개 이용일) <a class="dl" id="dailyCsv" href="#">CSV 다운로드</a></h2>
+      <div class="small muted">한국시간(KST) 기준이며, 질문이 있었던 날짜만 표시합니다. CSV에는 저장된 전체 일별 통계가 포함됩니다.</div>
+      <div style="overflow-x:auto" class="gap">
+        <table id="dailyTable">
+          <thead><tr><th>일자</th><th>질문수</th><th>순방문자</th><th>매칭</th><th>미매칭</th><th>매칭률</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
       <h2>놓친 질문 (빈도순) <a class="dl" id="missedCsv" href="#">CSV 다운로드</a></h2>
       <div class="small muted">같은 뜻으로 보이는 질문은 하나로 묶어서 보여줘요. 자주 놓친 질문부터 학습시키는 걸 추천해요.</div>
       <table id="missedTable"><thead><tr><th>질문</th><th>횟수</th><th>추정 항목</th><th>학습 등록</th></tr></thead><tbody></tbody></table>
@@ -2915,6 +2977,7 @@ async function login(){
 
 async function loadAll(){
   document.getElementById('topCsv').href = '/api/admin/stats/top.csv?token=' + encodeURIComponent(TOKEN);
+  document.getElementById('dailyCsv').href = '/api/admin/stats/daily.csv?token=' + encodeURIComponent(TOKEN);
   document.getElementById('missedCsv').href = '/api/admin/missed.csv?token=' + encodeURIComponent(TOKEN);
   BLOCKS = await api('/api/admin/blocks');
   await Promise.all([loadStats(), loadMissed(), loadLearned()]);
@@ -2932,6 +2995,17 @@ async function loadStats(){
   document.querySelector('#topTable tbody').innerHTML = (s.topBlocks||[]).map(b=>
     '<tr><td>'+esc(b.title)+'</td><td>'+esc(b.count)+'</td></tr>'
   ).join('') || '<tr><td colspan="2" class="muted">데이터가 없어요.</td></tr>';
+
+  document.querySelector('#dailyTable tbody').innerHTML = (s.days||[]).map(d=>
+    '<tr>'+
+      '<td>'+esc(d.date)+'</td>'+
+      '<td>'+esc(d.total)+'</td>'+
+      '<td>'+esc(d.uniqueVisitors)+'</td>'+
+      '<td>'+esc(d.matchedCount)+'</td>'+
+      '<td>'+esc(d.unmatchedCount)+'</td>'+
+      '<td>'+esc(d.matchRate)+'%</td>'+
+    '</tr>'
+  ).join('') || '<tr><td colspan="6" class="muted">아직 일별 통계가 없어요.</td></tr>';
 }
 
 async function loadMissed(){
