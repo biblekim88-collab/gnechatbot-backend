@@ -1230,7 +1230,7 @@ function hqRowMatchMeta(query, row) {
   };
 }
 
-function rankHqContactRows(query, rows) {
+function rankHqContactRows(query, rows, maxResults = 10) {
   const raw = String(query || '').trim();
   const whole = compactText(raw);
   const tokens = hqSearchTokens(raw);
@@ -1275,7 +1275,8 @@ function rankHqContactRows(query, rows) {
         (a.dutyIdx < 0 ? 999999 : a.dutyIdx) - (b.dutyIdx < 0 ? 999999 : b.dutyIdx) ||
         String(a.row.department).localeCompare(String(b.row.department), 'ko')
       );
-      return literal.slice(0, 10).map(x => x.row);
+      const literalRows = literal.map(x => x.row);
+      return maxResults && maxResults > 0 ? literalRows.slice(0, maxResults) : literalRows;
     }
   }
 
@@ -1312,7 +1313,8 @@ function rankHqContactRows(query, rows) {
   // 최상위 결과와 점수 차가 작은 후보만 남깁니다.
   const minScore = Math.max(95, top.score - 85);
   const narrowed = ranked.filter(x => x.score >= minScore);
-  return narrowed.slice(0, 10).map(x => x.row);
+  const narrowedRows = narrowed.map(x => x.row);
+  return maxResults && maxResults > 0 ? narrowedRows.slice(0, maxResults) : narrowedRows;
 }
 
 function loadPersistedHqContacts() {
@@ -1452,6 +1454,36 @@ async function searchGneHqContacts(query) {
   }
 
   return saveHqQueryCache(core, filtered);
+}
+
+// 웹 업무담당자 검색 페이지는 카카오 말풍선보다 넓게 볼 수 있으므로 결과를 임의로 5/10건에 자르지 않습니다.
+// 특히 '재정과'처럼 부서명을 정확히 입력한 경우 해당 부서의 실무담당자를 모두 보여줍니다.
+async function searchGneHqContactsForWeb(query) {
+  const core = normalizeHqContactSearchQuery(query);
+  if (!core) return [];
+
+  const allRows = await getAllGneHqContacts();
+  const whole = compactText(core);
+
+  const exactDeptRows = (allRows || [])
+    .filter(row => !isExcludedHqLeadershipRow(row) && compactText(row && row.department || '') === whole)
+    .sort((a, b) =>
+      String(a.team || '').localeCompare(String(b.team || ''), 'ko') ||
+      String(a.phone || '').localeCompare(String(b.phone || ''), 'ko')
+    );
+  if (exactDeptRows.length) return exactDeptRows;
+
+  let filtered = rankHqContactRows(core, allRows, 0);
+  if (!filtered.length) {
+    for (const fallback of hqContactFallbackQueries(core)) {
+      const retry = rankHqContactRows(fallback, allRows, 0);
+      if (retry.length) {
+        filtered = retry;
+        break;
+      }
+    }
+  }
+  return filtered;
 }
 
 function extractHqWorkParamFromPayload(body) {
@@ -2149,14 +2181,13 @@ function withStaffSearchQuickReply(payload) {
   // 담당자 관련 정보가 없는 일반 답변에는 노출하지 않습니다.
   if (!hasContactInfo) return payload;
 
-  // 이미 본청/지역청 검색 링크가 직접 표시된 카드라면 중복 노출하지 않습니다.
-  if (outputBlob.includes('/staff-search')) return payload;
-
+  // 카드 안에 담당자 검색 링크가 있더라도 노란 바로연결 버튼은 계속 유지합니다.
+  // 사용자가 한 번 버튼을 눌러 다음 응답으로 이동한 뒤에도 다시 업무담당자 검색을 이어갈 수 있게 합니다.
   const quickReplies = Array.isArray(payload.template.quickReplies)
     ? payload.template.quickReplies.slice()
     : [];
 
-  const label = '담당자검색(본청, 지역청)';
+  const label = '🔎 업무담당자 검색';
   const alreadyHasStaffSearch = quickReplies.some(q =>
     /업무담당자\s*검색|담당자검색/.test(String((q && q.label) || '')) ||
     /담당자$/.test(String((q && q.messageText) || '').trim())
@@ -2261,6 +2292,7 @@ function getKakaoInteractionMeta(body) {
   const trigger = flow.trigger || {};
   const triggerType = String(trigger.type || '').trim();
   const referrerBlock = trigger.referrerBlock || {};
+  const lastBlock = flow.lastBlock || {};
   const currentBlock = (payload.userRequest && payload.userRequest.block) || payload.intent || {};
   const utterance = String((payload.userRequest && payload.userRequest.utterance) || '').trim();
 
@@ -2275,7 +2307,11 @@ function getKakaoInteractionMeta(body) {
     triggerType,
     buttonText: isButton ? utterance : '',
     referrerBlock: String(referrerBlock.name || '').trim(),
-    currentBlock: String(currentBlock.name || '').trim()
+    referrerBlockId: String(referrerBlock.id || '').trim(),
+    currentBlock: String(currentBlock.name || '').trim(),
+    currentBlockId: String(currentBlock.id || '').trim(),
+    lastBlock: String(lastBlock.name || '').trim(),
+    lastBlockId: String(lastBlock.id || '').trim()
   };
 }
 
@@ -2295,7 +2331,11 @@ function trackQuery(query, matchedTitle, matched, source, visitorId, interaction
     triggerType: meta.triggerType || '',
     buttonText: meta.buttonText || '',
     referrerBlock: meta.referrerBlock || '',
-    currentBlock: meta.currentBlock || ''
+    referrerBlockId: meta.referrerBlockId || '',
+    currentBlock: meta.currentBlock || '',
+    currentBlockId: meta.currentBlockId || '',
+    lastBlock: meta.lastBlock || '',
+    lastBlockId: meta.lastBlockId || ''
   });
   if (list.length > 20000) list.shift();
   writeJson(QUERIES_PATH, list);
@@ -2428,15 +2468,15 @@ app.get('/staff-search', (req, res) => {
   h1{font-size:20px;margin:0 0 6px}.sub{font-size:14px;line-height:1.6;color:#666;margin-bottom:14px}
   .scope{background:#fff7cc;border:1px solid #ffe36b;border-radius:12px;padding:11px 12px;font-size:13px;line-height:1.55;color:#554700;margin-bottom:15px}
   .search{display:flex;gap:8px}.search input{flex:1;min-width:0;height:46px;border:1px solid #cfd6dd;border-radius:10px;padding:0 13px;font-size:16px;outline:none}.search input:focus{border-color:#777}
-  .search button,.region-toggle{height:46px;border:0;border-radius:10px;padding:0 17px;font-size:15px;font-weight:700;background:#fee500;color:#191919;cursor:pointer}
-  .region-toggle{width:100%;margin-top:12px;background:#eef2f6}
+  .search button,.region-toggle,.dept-toggle{height:46px;border:0;border-radius:10px;padding:0 17px;font-size:15px;font-weight:700;background:#fee500;color:#191919;cursor:pointer}
+  .region-toggle,.dept-toggle{width:100%;margin-top:12px;background:#eef2f6}
   .examples{display:flex;gap:7px;flex-wrap:wrap;margin-top:12px}.chip{border:1px solid #e1e5e9;background:#fff;border-radius:999px;padding:7px 10px;font-size:13px;cursor:pointer}
-  #regionBox{display:none;margin-top:12px;padding-top:13px;border-top:1px solid #edf0f2}.region-title{font-size:14px;font-weight:800;margin-bottom:4px}.region-help{font-size:12px;line-height:1.5;color:#777;margin-bottom:10px}
-  .regions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.region-link{display:block;text-decoration:none;text-align:center;border:1px solid #dfe4e8;background:#fff;border-radius:10px;padding:10px 7px;color:#222;font-size:13px;font-weight:700}
+  #regionBox,#deptBox{display:none;margin-top:12px;padding-top:13px;border-top:1px solid #edf0f2}.region-title,.dept-title{font-size:14px;font-weight:800;margin-bottom:4px}.region-help,.dept-help{font-size:12px;line-height:1.5;color:#777;margin-bottom:10px}
+  .regions,.depts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.region-link,.dept-link{display:block;text-decoration:none;text-align:center;border:1px solid #dfe4e8;background:#fff;border-radius:10px;padding:10px 7px;color:#222;font-size:13px;font-weight:700;cursor:pointer}.dept-count{display:block;font-size:11px;color:#888;font-weight:500;margin-top:2px}
   #status{font-size:14px;color:#666;margin:16px 2px 8px}.result{background:#fff;border-radius:14px;padding:15px 16px;margin-top:10px;box-shadow:0 1px 8px rgba(0,0,0,.05)}
   .dept{font-weight:800;font-size:16px;margin-bottom:6px}.phone{display:inline-block;margin:2px 0 8px;font-weight:700;color:#1b5dbf;text-decoration:none}.duty{font-size:14px;line-height:1.55;white-space:pre-wrap;color:#444}
   .notice{font-size:12px;line-height:1.55;color:#777;margin-top:16px}.empty{background:#fff;border-radius:14px;padding:18px;margin-top:10px;color:#555}
-  @media(min-width:560px){.regions{grid-template-columns:repeat(3,minmax(0,1fr))}}
+  @media(min-width:560px){.regions,.depts{grid-template-columns:repeat(3,minmax(0,1fr))}}
 </style>
 </head>
 <body>
@@ -2458,6 +2498,12 @@ app.get('/staff-search', (req, res) => {
     </div>
     <div id="status"></div>
     <div id="results"></div>
+    <button id="deptToggle" class="dept-toggle" type="button">🏢 본청 부서 보기</button>
+    <div id="deptBox">
+      <div class="dept-title">경상남도교육청 본청 부서</div>
+      <div class="dept-help">부서를 누르면 해당 부서의 실무담당자 업무분장을 모두 검색합니다. 검색하면 이 목록은 자동으로 접혀 결과가 먼저 보입니다.</div>
+      <div id="depts" class="depts"></div>
+    </div>
     <button id="regionToggle" class="region-toggle" type="button">🏫 지역교육청 안내 보기</button>
     <div id="regionBox">
       <div class="region-title">지역교육지원청 누리집</div>
@@ -2488,11 +2534,23 @@ app.get('/staff-search', (req, res) => {
 </div>
 <script>
 const q=document.getElementById('q'), btn=document.getElementById('btn'), status=document.getElementById('status'), results=document.getElementById('results');
+const deptToggle=document.getElementById('deptToggle'), deptBox=document.getElementById('deptBox'), depts=document.getElementById('depts');
 const regionToggle=document.getElementById('regionToggle'), regionBox=document.getElementById('regionBox');
 function esc(v){return String(v??'').replace(/[&<>\"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[m]));}
 function tel(v){const m=String(v||'').match(/0\d{1,2}-\d{3,4}-\d{4}/);return m?m[0]:'';}
 function setRegion(open){regionBox.style.display=open?'block':'none';regionToggle.textContent=open?'🏫 지역교육청 안내 닫기':'🏫 지역교육청 안내 보기';}
-regionToggle.addEventListener('click',()=>setRegion(regionBox.style.display!=='block'));
+function setDept(open){deptBox.style.display=open?'block':'none';deptToggle.textContent=open?'🏢 본청 부서 닫기':'🏢 본청 부서 보기';}
+regionToggle.addEventListener('click',()=>{setDept(false);setRegion(regionBox.style.display!=='block');});
+deptToggle.addEventListener('click',()=>{setRegion(false);setDept(deptBox.style.display!=='block');});
+async function loadDepartments(){
+  try{
+    const r=await fetch('/api/hq-departments',{cache:'no-store'}); const d=await r.json();
+    const list=Array.isArray(d.departments)?d.departments:[];
+    depts.innerHTML=list.map(x=>'<button class="dept-link" type="button" data-dept="'+esc(x.name)+'">'+esc(x.name)+'<span class="dept-count">실무 '+esc(x.count)+'명</span></button>').join('');
+    depts.querySelectorAll('.dept-link').forEach(b=>b.addEventListener('click',()=>{q.value=b.dataset.dept||'';setDept(false);search();}));
+  }catch(_){depts.innerHTML='<div class="empty">본청 부서 목록을 불러오지 못했습니다.</div>';}
+}
+loadDepartments();
 const pageParams=new URLSearchParams(location.search);
 if(pageParams.get('regional')==='1'){setRegion(true);setTimeout(()=>regionBox.scrollIntoView({behavior:'smooth',block:'start'}),100);}
 const presetQuery=(pageParams.get('query')||'').trim();
@@ -2500,6 +2558,7 @@ if(presetQuery) q.value=presetQuery;
 async function search(){
   const query=q.value.trim();
   if(!query){q.focus();return;}
+  setDept(false); setRegion(false);
   btn.disabled=true; status.textContent='검색 중입니다…'; results.innerHTML='';
   try{
     const r=await fetch('/api/hq-contact?query='+encodeURIComponent(query),{cache:'no-store'});
@@ -2508,10 +2567,11 @@ async function search(){
     const list=Array.isArray(d.contacts)?d.contacts:[];
     status.textContent="'"+query+"' 검색 결과 "+list.length+"건";
     if(!list.length){results.innerHTML='<div class="empty">본청 관련 실무담당자를 찾지 못했습니다. 지역교육지원청 소관 업무라면 아래의 <b>지역교육청 안내</b>를 이용해 주세요.</div>';return;}
-    results.innerHTML=list.slice(0,5).map(c=>{
+    results.innerHTML=list.map(c=>{
       const p=tel(c.phone), phone=p?'<a class="phone" href="tel:'+p.replace(/-/g,'')+'">☎ '+esc(p)+'</a>':'<div class="phone">☎ '+esc(c.phone||'')+'</div>';
       return '<div class="result"><div class="dept">'+esc(c.department||'')+(c.team?' / '+esc(c.team):'')+'</div>'+phone+'<div class="duty">'+esc(c.duty||'')+'</div></div>';
     }).join('');
+    setTimeout(()=>status.scrollIntoView({behavior:'smooth',block:'start'}),30);
   }catch(e){status.textContent='';results.innerHTML='<div class="empty">'+esc(e.message||'검색 중 오류가 발생했습니다.')+' 잠시 후 다시 이용해 주세요.</div>';}
   finally{btn.disabled=false;}
 }
@@ -2535,11 +2595,31 @@ app.get('/api/hq-contact', async (req, res) => {
     });
   }
   try {
-    const contacts = await searchGneHqContacts(query);
-    return res.json({ ok: true, query, count: contacts.length, contacts: contacts.slice(0, 10), officialUrl: GNE_HQ_WORK_SEARCH_URL });
+    const contacts = await searchGneHqContactsForWeb(query);
+    return res.json({ ok: true, query, count: contacts.length, contacts, officialUrl: GNE_HQ_WORK_SEARCH_URL });
   } catch (err) {
     console.error('본청 업무담당자 테스트 API 오류:', err && err.message ? err.message : err);
     return res.status(502).json({ ok: false, message: '경상남도교육청 공식 업무검색 조회에 실패했습니다.', officialUrl: GNE_HQ_WORK_SEARCH_URL });
+  }
+});
+
+// 본청 업무담당자 검색 페이지의 부서 목록. 공식 업무분장 캐시에서 부서명을 자동 추출합니다.
+app.get('/api/hq-departments', async (req, res) => {
+  try {
+    const rows = await getAllGneHqContacts();
+    const counts = new Map();
+    for (const row of (rows || [])) {
+      if (isExcludedHqLeadershipRow(row)) continue;
+      const name = String(row && row.department || '').trim();
+      if (!name) continue;
+      counts.set(name, (counts.get(name) || 0) + 1);
+    }
+    const departments = [...counts.entries()]
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => String(a.name).localeCompare(String(b.name), 'ko'));
+    res.json({ ok: true, count: departments.length, departments });
+  } catch (err) {
+    res.status(502).json({ ok: false, message: '본청 부서 목록을 불러오지 못했습니다.', departments: [] });
   }
 });
 
@@ -2795,13 +2875,33 @@ function isBusinessGuideResult(result) {
     || /businessinfo\.jsp|business[_-]?info|biz[_-]?info/i.test(url);
 }
 
-function deriveDepartmentHomepageUrl(results) {
+function deriveDepartmentHomepageUrl(results, department = '') {
   const rows = Array.isArray(results) ? results : [];
-  // 검색 결과에 실제 부서안내 페이지가 있으면 그것을 가장 먼저 사용합니다.
+  const deptKey = compactText(department || '');
+
+  // 관련 부서가 확인된 경우 그 부서명이 제목/검색문맥에 들어 있는 본청 부서 페이지를 우선합니다.
+  if (deptKey) {
+    const relatedRows = rows.filter(r => {
+      if (!r) return false;
+      const blob = compactText(`${r.title || ''} ${r.snippet || ''} ${r.url || ''}`);
+      return blob.includes(deptKey);
+    });
+
+    const exactRelated = relatedRows.find(r => r.type === '부서안내' && /bu\d+_info\.jsp/i.test(String(r.url || '')));
+    if (exactRelated) return exactRelated.url;
+
+    for (const r of relatedRows) {
+      const m = String(r.url || '').match(/https:\/\/www\.gne\.go\.kr\/www\/buseo(\d+)\//i);
+      if (!m) continue;
+      const no = m[1];
+      return `https://www.gne.go.kr/www/buseo${no}/bu${no}_info.jsp`;
+    }
+  }
+
+  // 관련 부서명을 검색결과 문맥에서 직접 찾지 못했을 때의 기존 보조 로직입니다.
   const exact = rows.find(r => r && r.type === '부서안내' && /bu\d+_info\.jsp/i.test(String(r.url || '')));
   if (exact) return exact.url;
 
-  // 같은 부서의 다른 본청 페이지에서 buseo 번호를 얻어 부서 대표 안내 페이지를 구성합니다.
   for (const r of rows) {
     const m = String(r && r.url || '').match(/https:\/\/www\.gne\.go\.kr\/www\/buseo(\d+)\//i);
     if (!m) continue;
@@ -3081,10 +3181,11 @@ async function buildGneOfficialSearchResponse(rawQuery) {
     related = summarizeRelatedDepartmentFromContacts(contactQuery, contacts);
   } catch (_) {}
 
-  // 사업안내가 있으면 해당 페이지, 없으면 담당부서 누리집을 대표 링크로 사용합니다.
+  // 관련 부서가 확인되면 대표 링크는 항상 '담당부서 누리집'으로 통일합니다.
+  // 관련 부서를 찾지 못한 경우에만 사업안내 페이지를 우선합니다.
   const businessGuide = search.results.find(isBusinessGuideResult) || null;
-  const departmentHomepageUrl = deriveDepartmentHomepageUrl(search.results);
-  const primaryResult = businessGuide || search.results[0];
+  const departmentHomepageUrl = deriveDepartmentHomepageUrl(search.results, related && related.department ? related.department : '');
+  const primaryResult = search.results[0];
 
   const lines = [`🔎 '${search.query}' 관련 본청 정보를 찾았어요.`];
   if (related && related.department) {
@@ -3103,7 +3204,9 @@ async function buildGneOfficialSearchResponse(rawQuery) {
   const text = lines.join('\n').slice(0, 980);
   const buttons = [];
 
-  if (businessGuide && businessGuide.url) {
+  if (related && related.department && departmentHomepageUrl) {
+    buttons.push({ label: '🏢 담당부서 누리집', action: 'webLink', webLinkUrl: departmentHomepageUrl });
+  } else if (businessGuide && businessGuide.url) {
     buttons.push({ label: '📌 사업안내', action: 'webLink', webLinkUrl: businessGuide.url });
   } else if (departmentHomepageUrl) {
     buttons.push({ label: '🏢 담당부서 누리집', action: 'webLink', webLinkUrl: departmentHomepageUrl });
@@ -3116,9 +3219,11 @@ async function buildGneOfficialSearchResponse(rawQuery) {
     outputs.push({
       basicCard: {
         title: related && related.department ? related.department : '경남교육청 본청 안내',
-        description: businessGuide
-          ? '사업안내 페이지를 우선 연결합니다.'
-          : (departmentHomepageUrl ? '담당부서 누리집을 연결합니다.' : '관련 본청 페이지를 확인할 수 있어요.'),
+        description: (related && related.department && departmentHomepageUrl)
+          ? '관련 부서가 확인되어 담당부서 누리집을 연결합니다.'
+          : (businessGuide
+            ? '사업안내 페이지를 연결합니다.'
+            : (departmentHomepageUrl ? '담당부서 누리집을 연결합니다.' : '관련 본청 페이지를 확인할 수 있어요.')),
         buttons
       }
     });
@@ -3166,7 +3271,12 @@ app.post('/api/kakao-skill', async (req, res) => {
   const kakaoInteraction = getKakaoInteractionMeta(req.body || {});
   const blocks = getEffectiveUtterances();
 
-  if (!utterance.trim()) return res.json(withStaffSearchQuickReply(kakaoFallbackResponse('', blocks, { failCount: 0 })));
+  if (!utterance.trim()) {
+    // 스킬이 발화 없이 호출된 경우에도 카카오가 넘긴 블록 흐름은 통계에 남깁니다.
+    const blockLabel = kakaoInteraction.currentBlock || kakaoInteraction.lastBlock || kakaoInteraction.referrerBlock || '카카오 블록 호출';
+    trackQuery('[블록 호출]', blockLabel, true, 'kakao-block-event', 'kakao:' + kakaoUserId, kakaoInteraction);
+    return res.json(withStaffSearchQuickReply(kakaoFallbackResponse('', blocks, { failCount: 0 })));
+  }
 
   // 담당자 메뉴 자체를 누른 경우에는 블록 파라미터나 일반 시나리오 매칭보다 먼저 처리합니다.
   // 예: '담당자(본청) 안내', '담당자 안내', '담당자', '담당', '담당부서', '담당업무'
@@ -3457,8 +3567,25 @@ app.get('/api/admin/stats', requireAdmin, (req, res) => {
   });
   const topButtons = Object.entries(buttonCounts)
     .sort((a,b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0]), 'ko'))
-    .slice(0, 30)
     .map(([label,count]) => ({ label, count }));
+
+  // Render가 실제로 받은 스킬 payload 안의 블록 흐름을 최대한 기록합니다.
+  // currentBlock은 스킬이 실행된 블록, referrerBlock은 버튼 등을 누른 출발 블록,
+  // lastBlock은 직전에 실행된 블록입니다. 카카오 내부에서만 이동하고 스킬을 호출하지 않은 블록은 Render가 직접 볼 수 없습니다.
+  const blockFlowMap = new Map();
+  const touchBlock = (name, kind) => {
+    const n = String(name || '').trim();
+    if (!n) return;
+    if (!blockFlowMap.has(n)) blockFlowMap.set(n, { name: n, current: 0, referrer: 0, last: 0 });
+    blockFlowMap.get(n)[kind] += 1;
+  };
+  list.forEach(e => {
+    touchBlock(e.currentBlock, 'current');
+    touchBlock(e.referrerBlock, 'referrer');
+    touchBlock(e.lastBlock, 'last');
+  });
+  const blockFlows = [...blockFlowMap.values()]
+    .sort((a,b) => (b.current+b.referrer+b.last) - (a.current+a.referrer+a.last) || String(a.name).localeCompare(String(b.name), 'ko'));
 
   const allVisitorIds = new Set(list.map(e => e.visitorId).filter(Boolean));
   const visitorQueryCounts = {};
@@ -3469,7 +3596,7 @@ app.get('/api/admin/stats', requireAdmin, (req, res) => {
     total, matchedCount, unmatchedCount: total - matchedCount,
     matchRate: total ? Number((matchedCount/total*100).toFixed(1)) : 0,
     uniqueVisitors: allVisitorIds.size, avgQueriesPerVisitor,
-    topBlocks, days, bySource, byInputType, topButtons,
+    topBlocks, days, bySource, byInputType, topButtons, blockFlows,
     storage: SUPABASE_ENABLED ? 'supabase' : 'local'
   });
 });
@@ -3502,12 +3629,17 @@ app.get('/api/admin/questions', requireAdmin, (req, res) => {
       inputType: e.inputType || '기록없음',
       triggerType: e.triggerType || '',
       buttonText: e.buttonText || '',
-      referrerBlock: e.referrerBlock || ''
+      referrerBlock: e.referrerBlock || '',
+      referrerBlockId: e.referrerBlockId || '',
+      currentBlock: e.currentBlock || '',
+      currentBlockId: e.currentBlockId || '',
+      lastBlock: e.lastBlock || '',
+      lastBlockId: e.lastBlockId || ''
     };
   });
 
   if (date) rows = rows.filter(r => r.date === date);
-  if (q) rows = rows.filter(r => (`${r.query} ${r.matchedTitle}`).toLowerCase().includes(q));
+  if (q) rows = rows.filter(r => (`${r.query} ${r.matchedTitle} ${r.referrerBlock} ${r.currentBlock} ${r.lastBlock}`).toLowerCase().includes(q));
   rows.sort((a, b) => b.idx - a.idx);
 
   const total = rows.length;
@@ -3533,7 +3665,12 @@ app.get('/api/admin/questions.csv', requireAdmin, (req, res) => {
       inputType: e.inputType || '기록없음',
       triggerType: e.triggerType || '',
       buttonText: e.buttonText || '',
-      referrerBlock: e.referrerBlock || ''
+      referrerBlock: e.referrerBlock || '',
+      referrerBlockId: e.referrerBlockId || '',
+      currentBlock: e.currentBlock || '',
+      currentBlockId: e.currentBlockId || '',
+      lastBlock: e.lastBlock || '',
+      lastBlockId: e.lastBlockId || ''
     };
   });
   if (date) rows = rows.filter(r => r.date === date);
@@ -3546,7 +3683,9 @@ app.get('/api/admin/questions.csv', requireAdmin, (req, res) => {
     { key: 'matchedTitle', label: '연결 항목' },
     { key: 'inputType', label: '입력유형' },
     { key: 'buttonText', label: '버튼내용' },
-    { key: 'referrerBlock', label: '출발블록' },
+    { key: 'referrerBlock', label: '버튼/상호작용 출발블록' },
+    { key: 'currentBlock', label: '현재 스킬블록' },
+    { key: 'lastBlock', label: '직전블록' },
     { key: 'triggerType', label: '카카오 Trigger Type' },
     { key: 'source', label: '유입경로' }
   ]);
@@ -3753,6 +3892,17 @@ app.get('/admin', (req, res) => {
     </div>
 
     <div class="card">
+      <h2>Render에서 확인된 카카오 블록 흐름</h2>
+      <div class="small muted">스킬 요청에 포함된 현재블록·버튼 출발블록·직전블록을 모두 모아 보여줍니다. 카카오 내부에서만 실행되고 Render 스킬을 호출하지 않은 블록은 여기에는 잡히지 않으며, 그런 블록까지 포함한 전체 호출은 카카오 챗봇 관리자센터의 분석 → 통계에서 확인할 수 있습니다.</div>
+      <div style="overflow-x:auto" class="gap">
+        <table id="blockFlowTable">
+          <thead><tr><th>블록명</th><th>현재 스킬블록</th><th>버튼 출발블록</th><th>직전블록</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
       <h2>전체 질문 내역 <a class="dl" id="questionsCsv" href="#">전체 CSV 다운로드</a></h2>
       <div class="small muted">모든 질문을 한국시간(KST) 기준 일자·시간과 함께 확인할 수 있습니다. 날짜를 선택하면 해당 날짜 질문만 볼 수 있어요.</div>
       <div class="row gap">
@@ -3764,7 +3914,7 @@ app.get('/admin', (req, res) => {
       <div class="small muted gap" id="questionMeta"></div>
       <div style="overflow-x:auto" class="gap">
         <table id="questionsTable">
-          <thead><tr><th>일자</th><th>시간</th><th>입력유형</th><th>질문/버튼</th><th>결과</th><th>연결 항목</th><th>출발블록</th></tr></thead>
+          <thead><tr><th>일자</th><th>시간</th><th>입력유형</th><th>질문/버튼</th><th>결과</th><th>연결 항목</th><th>버튼 출발블록</th><th>현재 스킬블록</th><th>직전블록</th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
@@ -3875,6 +4025,9 @@ async function loadStats(){
   document.querySelector('#buttonTable tbody').innerHTML = (s.topButtons||[]).map(b=>
     '<tr><td>'+esc(b.label)+'</td><td>'+esc(b.count)+'</td></tr>'
   ).join('') || '<tr><td colspan="2" class="muted">아직 기록된 버튼 클릭이 없어요.</td></tr>';
+  document.querySelector('#blockFlowTable tbody').innerHTML = (s.blockFlows||[]).map(b=>
+    '<tr><td>'+esc(b.name)+'</td><td>'+esc(b.current||0)+'</td><td>'+esc(b.referrer||0)+'</td><td>'+esc(b.last||0)+'</td></tr>'
+  ).join('') || '<tr><td colspan="4" class="muted">아직 Render가 확인한 블록 정보가 없어요.</td></tr>';
   document.querySelector('#dailyTable tbody').innerHTML = (s.days||[]).map(d=>
     '<tr>'+
       '<td>'+esc(d.date)+'</td>'+
@@ -3908,8 +4061,10 @@ async function loadQuestions(page){
       '<td>'+(e.matched ? '<span class="badge ok">매칭</span>' : '<span class="badge" style="background:#fde8e8;color:#b02a2a">미매칭</span>')+'</td>'+ 
       '<td class="small muted">'+esc(e.matchedTitle||'-')+'</td>'+ 
       '<td class="small muted">'+esc(e.referrerBlock||'-')+'</td>'+
+      '<td class="small muted">'+esc(e.currentBlock||'-')+'</td>'+
+      '<td class="small muted">'+esc(e.lastBlock||'-')+'</td>'+
     '</tr>'
-  ).join('') || '<tr><td colspan="7" class="muted">해당 조건의 질문이 없어요.</td></tr>';
+  ).join('') || '<tr><td colspan="9" class="muted">해당 조건의 질문이 없어요.</td></tr>';
   document.getElementById('questionPrev').disabled = QUESTION_PAGE <= 1;
   document.getElementById('questionNext').disabled = QUESTION_PAGE >= (d.pages||1);
   const csvParams = new URLSearchParams({ token:TOKEN });
