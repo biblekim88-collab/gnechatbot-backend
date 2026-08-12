@@ -2812,6 +2812,7 @@ app.get('/staff-search', (req, res) => {
   .regions,.depts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.region-link,.dept-link{display:block;text-decoration:none;text-align:center;border:1px solid #dfe4e8;background:#fff;border-radius:10px;padding:10px 7px;color:#222;font-size:13px;font-weight:700;cursor:pointer}.dept-count{display:block;font-size:11px;color:#888;font-weight:500;margin-top:2px}
   #status{font-size:14px;color:#666;margin:16px 2px 8px}.result{background:#fff;border-radius:14px;padding:15px 16px;margin-top:10px;box-shadow:0 1px 8px rgba(0,0,0,.05)}
   .dept{font-weight:800;font-size:16px;margin-bottom:6px}.phone{display:inline-block;margin:2px 0 8px;font-weight:700;color:#1b5dbf;text-decoration:none}.duty{font-size:14px;line-height:1.55;white-space:pre-wrap;color:#444}
+  .hl{color:#1b5dbf;font-weight:800}
   .clarify{background:#fff7cc;border:1px solid #ffe36b;border-radius:14px;padding:14px 15px;margin-top:10px;line-height:1.55}.clarify-title{font-weight:800;margin-bottom:4px}.group{margin-top:14px}.group-title{font-size:16px;font-weight:800;margin:0 0 8px}.group-desc{font-size:13px;color:#666;margin:-3px 0 8px}.group .result{margin-top:8px;border:1px solid #eef1f4;box-shadow:none}
   .notice{font-size:12px;line-height:1.55;color:#777;margin-top:16px}.empty{background:#fff;border-radius:14px;padding:18px;margin-top:10px;color:#555}
   @media(min-width:560px){.regions,.depts{grid-template-columns:repeat(3,minmax(0,1fr))}}
@@ -2876,6 +2877,16 @@ const q=document.getElementById('q'), btn=document.getElementById('btn'), status
 const deptToggle=document.getElementById('deptToggle'), deptBox=document.getElementById('deptBox'), depts=document.getElementById('depts');
 const regionToggle=document.getElementById('regionToggle'), regionBox=document.getElementById('regionBox');
 function esc(v){return String(v??'').replace(/[&<>\"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[m]));}
+function escRe(v){return String(v||'').replace(/[.*+?^$(){}|[\\]]/g,function(m){return String.fromCharCode(92)+m;});}
+function hl(text,terms){
+  let out=esc(text);
+  const uniq=[...new Set((terms||[]).filter(Boolean))].sort((a,b)=>b.length-a.length);
+  uniq.forEach(t=>{
+    const re=new RegExp('('+escRe(esc(t))+')','gi');
+    out=out.replace(re,'<span class="hl">$1</span>');
+  });
+  return out;
+}
 function tel(v){const m=String(v||'').match(/0\d{1,2}-\d{3,4}-\d{4}/);return m?m[0]:'';}
 function setRegion(open){regionBox.style.display=open?'block':'none';regionToggle.textContent=open?'🏫 지역교육청 안내 닫기':'🏫 지역교육청 안내 보기';}
 function setDept(open){deptBox.style.display=open?'block':'none';deptToggle.textContent=open?'🏢 본청 부서 닫기':'🏢 본청 부서 보기';}
@@ -2890,6 +2901,7 @@ async function loadDepartments(){
   }catch(_){depts.innerHTML='<div class="empty">본청 부서 목록을 불러오지 못했습니다.</div>';}
 }
 loadDepartments();
+setDept(true);
 const pageParams=new URLSearchParams(location.search);
 if(pageParams.get('regional')==='1'){setRegion(true);setTimeout(()=>regionBox.scrollIntoView({behavior:'smooth',block:'start'}),100);}
 const presetQuery=(pageParams.get('query')||'').trim();
@@ -2903,9 +2915,10 @@ async function search(){
     const r=await fetch('/api/hq-contact?query='+encodeURIComponent(query),{cache:'no-store'});
     const d=await r.json();
     if(!r.ok||!d.ok) throw new Error(d.message||'검색에 실패했습니다.');
+    const terms=query.split(/\s+/).filter(Boolean);
     const renderContact=c=>{
       const p=tel(c.phone), phone=p?'<a class="phone" href="tel:'+p.replace(/-/g,'')+'">☎ '+esc(p)+'</a>':'<div class="phone">☎ '+esc(c.phone||'')+'</div>';
-      return '<div class="result"><div class="dept">'+esc(c.department||'')+(c.team?' / '+esc(c.team):'')+'</div>'+phone+'<div class="duty">'+esc(c.duty||'')+'</div></div>';
+      return '<div class="result"><div class="dept">'+hl(c.department||'',terms)+(c.team?' / '+hl(c.team,terms):'')+'</div>'+phone+'<div class="duty">'+hl(c.duty||'',terms)+'</div></div>';
     };
     if(d.disambiguation==='construction'){
       const finance=Array.isArray(d.groups&&d.groups.finance)?d.groups.finance:[];
