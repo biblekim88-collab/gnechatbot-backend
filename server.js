@@ -10,6 +10,7 @@ const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 const app = express();
 app.use(cors());               // 필요하면 특정 도메인만 허용하도록 좁힐 수 있음 (README 참고)
@@ -39,8 +40,121 @@ function readJson(p, fallback) {
   try { return JSON.parse(fs.readFileSync(p, 'utf-8')); }
   catch (e) { return fallback; }
 }
-function writeJson(p, data) {
+function writeJsonLocal(p, data) {
+  fs.mkdirSync(path.dirname(p), { recursive: true });
   fs.writeFileSync(p, JSON.stringify(data, null, 1), 'utf-8');
+}
+
+// ============ Supabase 영구저장 (Render 재배포/재시작 시 통계 보존) ============
+// 설정이 없거나 Supabase가 일시 실패하면 로컬 JSON 방식으로 계속 동작합니다.
+const SUPABASE_URL = String(process.env.SUPABASE_URL || '').trim().replace(/\/$/, '');
+const SUPABASE_SECRET_KEY = String(process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '').trim();
+const SUPABASE_ENABLED = !!(SUPABASE_URL && SUPABASE_SECRET_KEY);
+const SUPABASE_TABLE = 'chatbot_store';
+const PERSIST_PATH_KEYS = new Map([
+  [LEARNED_PATH, 'learned'],
+  [MISSED_PATH, 'missed'],
+  [QUERIES_PATH, 'queries']
+]);
+const PERSIST_QUEUES = new Map();
+
+function persistentKeyForPath(p) {
+  return PERSIST_PATH_KEYS.get(p) || '';
+}
+function hashVisitorId(value) {
+  if (!value) return '';
+  // 이미 비식별화된 값이면 재해시하지 않습니다.
+  if (/^v_[a-f0-9]{32}$/i.test(String(value))) return String(value);
+  return 'v_' + crypto.createHash('sha256').update(String(value)).digest('hex').slice(0, 32);
+}
+function sanitizeForRemote(key, data) {
+  if (key !== 'queries' || !Array.isArray(data)) return data;
+  return data.map(row => ({
+    ...row,
+    visitorId: row && row.visitorId ? hashVisitorId(row.visitorId) : ''
+  }));
+}
+function supabaseHeaders(extra = {}) {
+  // sb_secret_* 키는 JWT가 아니므로 Authorization Bearer가 아니라 apikey 헤더로 보냅니다.
+  return { apikey: SUPABASE_SECRET_KEY, ...extra };
+}
+async function supabaseFetchJson(url, options = {}) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 9000);
+  try {
+    const r = await fetch(url, { ...options, signal: controller.signal });
+    if (!r.ok) {
+      const body = await r.text();
+      throw new Error(`Supabase HTTP ${r.status}: ${body.slice(0, 300)}`);
+    }
+    const text = await r.text();
+    return text ? JSON.parse(text) : null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+async function loadSupabaseStore() {
+  if (!SUPABASE_ENABLED) return new Map();
+  const url = `${SUPABASE_URL}/rest/v1/${SUPABASE_TABLE}?select=key,data,updated_at&key=in.(queries,missed,learned)`;
+  const rows = await supabaseFetchJson(url, { headers: supabaseHeaders() });
+  return new Map((Array.isArray(rows) ? rows : []).map(row => [row.key, row.data]));
+}
+async function saveSupabaseStore(key, data) {
+  if (!SUPABASE_ENABLED || !key) return;
+  const payload = [{ key, data: sanitizeForRemote(key, data), updated_at: new Date().toISOString() }];
+  const url = `${SUPABASE_URL}/rest/v1/${SUPABASE_TABLE}?on_conflict=key`;
+  await supabaseFetchJson(url, {
+    method: 'POST',
+    headers: supabaseHeaders({
+      'Content-Type': 'application/json',
+      'Prefer': 'resolution=merge-duplicates,return=minimal'
+    }),
+    body: JSON.stringify(payload)
+  });
+}
+async function saveSupabaseStoreWithRetry(key, data) {
+  let lastErr = null;
+  for (const delay of [0, 800, 2200]) {
+    if (delay) await new Promise(resolve => setTimeout(resolve, delay));
+    try { return await saveSupabaseStore(key, data); }
+    catch (err) { lastErr = err; }
+  }
+  throw lastErr;
+}
+function queueSupabasePersist(p, data) {
+  const key = persistentKeyForPath(p);
+  if (!SUPABASE_ENABLED || !key) return;
+  const previous = PERSIST_QUEUES.get(key) || Promise.resolve();
+  const next = previous
+    .catch(() => {})
+    .then(() => saveSupabaseStoreWithRetry(key, data))
+    .catch(err => console.error(`Supabase ${key} 저장 실패:`, err && err.message ? err.message : err));
+  PERSIST_QUEUES.set(key, next);
+}
+function writeJson(p, data) {
+  writeJsonLocal(p, data);
+  queueSupabasePersist(p, data);
+}
+async function initSupabasePersistence() {
+  if (!SUPABASE_ENABLED) {
+    console.log('ℹ Supabase 영구저장 비활성화: SUPABASE_URL / SUPABASE_SECRET_KEY 확인');
+    return;
+  }
+  try {
+    const remote = await loadSupabaseStore();
+    for (const [p, key] of PERSIST_PATH_KEYS.entries()) {
+      if (remote.has(key) && Array.isArray(remote.get(key))) {
+        writeJsonLocal(p, remote.get(key));
+      } else {
+        // 최초 연결 시 현재 로컬 데이터를 원격 저장소의 시작값으로 등록합니다.
+        await saveSupabaseStoreWithRetry(key, readJson(p, []));
+      }
+    }
+    console.log('✅ Supabase 영구저장 연결 완료: chatbot_store (통계/놓친질문/학습표현 복구)');
+  } catch (err) {
+    // DB 장애가 챗봇 자체 장애로 번지지 않도록 로컬 방식으로 계속 실행합니다.
+    console.error('Supabase 초기 연결 실패 - 로컬 저장으로 계속 실행:', err && err.message ? err.message : err);
+  }
 }
 
 let SCENARIOS = readJson(SCENARIOS_PATH, { sections: [], blocks: [] });
@@ -2645,7 +2759,8 @@ app.get('/api/admin/stats', requireAdmin, (req, res) => {
     total, matchedCount, unmatchedCount: total - matchedCount,
     matchRate: total ? Number((matchedCount/total*100).toFixed(1)) : 0,
     uniqueVisitors: allVisitorIds.size, avgQueriesPerVisitor,
-    topBlocks, days, bySource
+    topBlocks, days, bySource,
+    storage: SUPABASE_ENABLED ? 'supabase' : 'local'
   });
 });
 app.delete('/api/admin/stats', requireAdmin, (req, res) => {
@@ -2813,7 +2928,7 @@ async function loadStats(){
     ['순방문자', s.uniqueVisitors],
     ['1인당 평균 질문', s.avgQueriesPerVisitor]
   ].map(([l,n])=>'<div class="stat"><div class="n">'+esc(n)+'</div><div class="l">'+esc(l)+'</div></div>').join('');
-  document.getElementById('statsMeta').textContent = '매칭 ' + s.matchedCount + '건 / 미매칭 ' + s.unmatchedCount + '건';
+  document.getElementById('statsMeta').textContent = '매칭 ' + s.matchedCount + '건 / 미매칭 ' + s.unmatchedCount + '건 / 저장: ' + (s.storage === 'supabase' ? 'Supabase 영구보존' : 'Render 로컬');
   document.querySelector('#topTable tbody').innerHTML = (s.topBlocks||[]).map(b=>
     '<tr><td>'+esc(b.title)+'</td><td>'+esc(b.count)+'</td></tr>'
   ).join('') || '<tr><td colspan="2" class="muted">데이터가 없어요.</td></tr>';
@@ -2880,7 +2995,7 @@ if (TOKEN) { document.getElementById('token').value=''; login(); }
 // 업무분장 조회나 AI 호출을 전혀 하지 않아 빠르게 200 응답만 반환합니다.
 app.get('/healthz', (req, res) => {
   res.set('Cache-Control', 'no-store');
-  res.status(200).json({ ok: true, service: 'gne-minwon-chatbot', ts: Date.now() });
+  res.status(200).json({ ok: true, service: 'gne-minwon-chatbot', storage: SUPABASE_ENABLED ? 'supabase' : 'local', ts: Date.now() });
 });
 
 function waitMs(ms) {
@@ -2941,7 +3056,11 @@ app.get('/', (req, res) => {
   res.send('경상남도교육청 민원 챗봇 백엔드가 정상적으로 실행 중입니다.');
 });
 
-app.listen(PORT, () => {
+async function startServer() {
+  // 서버가 외부 요청을 받기 전에 Supabase에 저장된 통계/학습 데이터를 먼저 복구합니다.
+  await initSupabasePersistence();
+
+  app.listen(PORT, () => {
   console.log(`서버 실행 중: http://localhost:${PORT}`);
   if (ADMIN_TOKEN === 'change-me') {
     console.log('⚠ ADMIN_TOKEN 환경변수를 설정하지 않으면 기본값(change-me)이 사용됩니다. 꼭 바꿔주세요.');
@@ -2965,4 +3084,10 @@ app.listen(PORT, () => {
     });
   }, 20 * 60 * 1000);
   if (hqRefreshTimer.unref) hqRefreshTimer.unref();
+  });
+}
+
+startServer().catch(err => {
+  console.error('서버 시작 실패:', err && err.stack ? err.stack : err);
+  process.exit(1);
 });
