@@ -894,11 +894,27 @@ function hqContactFallbackQueries(query) {
   return out;
 }
 
+// '업무담당자' 메뉴와 같은 화면을 열어야 하는 대표 표현들입니다.
+// 검색어 없이 이 표현만 들어오면 담당자를 억지로 검색하지 않고
+// 본청 업무검색 / 지역교육청 안내 버튼이 있는 안내 카드를 보여줍니다.
+function isHqContactMenuAlias(rawQuery) {
+  const q = compactText(String(rawQuery || ''));
+  const aliases = new Set([
+    '업무담당자', '업무담당', '업무담당자안내', '업무담당안내',
+    '담당자', '담당', '담당자안내', '담당안내',
+    '담당부서', '담당부서안내', '담당업무', '담당업무안내',
+    '본청담당자', '본청담당', '본청담당자안내', '본청담당안내',
+    '본청업무담당자', '본청업무담당자안내',
+    '담당자본청안내', '담당본청안내'
+  ]);
+  return aliases.has(q);
+}
+
 function hqContactQueryCore(rawQuery) {
   let q = String(rawQuery || '').trim();
   q = q
     .replace(/경상남도교육청|경남교육청|교육청\s*본청|본청/gi, ' ')
-    .replace(/업무\s*담당자|업무\s*담당|담당\s*공무원|담당자|담당부서|담당과|문의처|연락처|전화번호|전화\s*번호|전화|연락/gi, ' ')
+    .replace(/업무\s*담당자|업무\s*담당|담당\s*공무원|담당업무|담당자|담당부서|담당과|담당|문의처|연락처|전화번호|전화\s*번호|전화|연락/gi, ' ')
     .replace(/누구(?:한테|에게)?|어디(?:로|에)?\s*(?:문의|전화)?|문의(?:하고\s*싶어|하려면|해야\s*해|해요|할까요)?/gi, ' ')
     .replace(/알려\s*줘|알려주세요|알려\s*주세요|찾아\s*줘|찾아주세요|찾아\s*주세요|연결\s*해줘|연결해주세요/gi, ' ')
     .replace(/[?!.]+/g, ' ')
@@ -909,8 +925,13 @@ function hqContactQueryCore(rawQuery) {
 
 function detectHqContactIntent(rawQuery) {
   const raw = String(rawQuery || '').trim();
+
+  // '담당자(본청) 안내', '담당자 안내', '담당부서', '담당업무' 등은
+  // 모두 '업무담당자'와 동일한 안내 카드로 연결합니다.
+  if (isHqContactMenuAlias(raw)) return { query: '' };
+
   const q = compactText(expandQuery(raw));
-  const isContact = /(업무담당자|담당자|담당부서|담당과|전화번호|연락처|문의처|문의|전화|누구한테|누구에게|어디로문의|어디에문의)/.test(q);
+  const isContact = /(업무담당자|업무담당|담당업무|담당자|담당부서|담당과|담당|전화번호|연락처|문의처|문의|전화|누구한테|누구에게|어디로문의|어디에문의)/.test(q);
   if (!isContact) return null;
 
   // 교육지원청·학교·직속기관 담당자는 이번 기능 범위(본청)에서 제외합니다.
