@@ -899,15 +899,22 @@ function hqContactFallbackQueries(query) {
 // 본청 업무검색 / 지역교육청 안내 버튼이 있는 안내 카드를 보여줍니다.
 function isHqContactMenuAlias(rawQuery) {
   const q = compactText(String(rawQuery || ''));
-  const aliases = new Set([
-    '업무담당자', '업무담당', '업무담당자안내', '업무담당안내',
-    '담당자', '담당', '담당자안내', '담당안내',
-    '담당부서', '담당부서안내', '담당업무', '담당업무안내',
-    '본청담당자', '본청담당', '본청담당자안내', '본청담당안내',
-    '본청업무담당자', '본청업무담당자안내',
-    '담당자본청안내', '담당본청안내'
-  ]);
-  return aliases.has(q);
+  if (!q) return false;
+
+  // 특정 업무명이 붙은 질문(예: '제증명 담당자')은 실제 담당자 검색으로 보내고,
+  // '담당자(본청) 안내', '담당자 안내', '담당부서', '담당업무'처럼
+  // 담당자 메뉴 자체를 뜻하는 표현만 안내 카드로 보냅니다.
+  const hasContactWord = /(업무담당자|업무담당|담당업무|담당부서|담당과|담당자|담당)/.test(q);
+  if (!hasContactWord) return false;
+
+  const residue = q
+    .replace(/경상남도교육청|경남교육청|교육청|본청/g, '')
+    .replace(/업무담당자|업무담당|담당업무|담당부서|담당과|담당자|담당/g, '')
+    .replace(/안내|찾기|검색|조회|메뉴|바로가기|전화번호|연락처|문의처|전화|연락|문의/g, '')
+    .replace(/알려줘|알려주세요|보여줘|보여주세요|어디야|어디예요|어디에요|어디/g, '')
+    .replace(/[^가-힣a-z0-9]/gi, '');
+
+  return residue.length === 0;
 }
 
 function hqContactQueryCore(rawQuery) {
@@ -2411,6 +2418,15 @@ app.post('/api/kakao-skill', async (req, res) => {
   const blocks = getEffectiveUtterances();
 
   if (!utterance.trim()) return res.json(withStaffSearchQuickReply(kakaoFallbackResponse('', blocks, { failCount: 0 })));
+
+  // 담당자 메뉴 자체를 누른 경우에는 블록 파라미터나 일반 시나리오 매칭보다 먼저 처리합니다.
+  // 예: '담당자(본청) 안내', '담당자 안내', '담당자', '담당', '담당부서', '담당업무'
+  if (isHqContactMenuAlias(utterance)) {
+    resetKakaoFailStreak(kakaoUserId);
+    resetKakaoTransferFailStreak(kakaoUserId);
+    trackQuery(utterance, '본청 업무담당자 안내', true, 'kakao-hq-contact-menu-alias', 'kakao:' + kakaoUserId);
+    return res.json(kakaoHqContactAskResponse());
+  }
 
   // '업무담당자 찾기' 블록에서 @sys.text 파라미터(work)로 받은 검색어는
   // '담당자'라는 단어가 없어도 그대로 본청 업무검색에 사용합니다.
