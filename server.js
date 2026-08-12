@@ -2731,6 +2731,16 @@ function toKstDateKey(isoTime) {
   return new Date(t + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
 
+function toKstDateTimeParts(isoTime) {
+  if (!isoTime) return { date: '', time: '', dateTime: '' };
+  const t = Date.parse(isoTime);
+  if (!Number.isFinite(t)) return { date: '', time: '', dateTime: '' };
+  const kst = new Date(t + 9 * 60 * 60 * 1000).toISOString();
+  const date = kst.slice(0, 10);
+  const time = kst.slice(11, 19);
+  return { date, time, dateTime: `${date} ${time}` };
+}
+
 function buildDailyStats(list, limit) {
   const byDay = {};
   (list || []).forEach(e => {
@@ -2800,6 +2810,130 @@ app.get('/api/admin/stats', requireAdmin, (req, res) => {
 app.delete('/api/admin/stats', requireAdmin, (req, res) => {
   writeJson(QUERIES_PATH, []);
   res.json({ status: 'ok' });
+});
+
+
+// 전체 질문 상세 내역: 날짜(KST)·검색어 필터 + 페이지 이동
+app.get('/api/admin/questions', requireAdmin, (req, res) => {
+  const list = readJson(QUERIES_PATH, []);
+  const date = String(req.query.date || '').trim();
+  const q = String(req.query.q || '').trim().toLowerCase();
+  const pageSize = Math.min(Math.max(Number(req.query.pageSize) || 200, 20), 500);
+  const page = Math.max(Number(req.query.page) || 1, 1);
+
+  let rows = list.map((e, idx) => {
+    const dt = toKstDateTimeParts(e.time);
+    return {
+      idx,
+      date: dt.date,
+      time: dt.time,
+      dateTime: dt.dateTime,
+      query: e.query || '',
+      matched: !!e.matched,
+      result: e.matched ? '매칭' : '미매칭',
+      matchedTitle: e.matchedTitle || '',
+      source: e.source || ''
+    };
+  });
+
+  if (date) rows = rows.filter(r => r.date === date);
+  if (q) rows = rows.filter(r => (`${r.query} ${r.matchedTitle}`).toLowerCase().includes(q));
+  rows.sort((a, b) => b.idx - a.idx);
+
+  const total = rows.length;
+  const pages = Math.max(Math.ceil(total / pageSize), 1);
+  const safePage = Math.min(page, pages);
+  const start = (safePage - 1) * pageSize;
+  res.json({ total, page: safePage, pageSize, pages, items: rows.slice(start, start + pageSize) });
+});
+
+app.get('/api/admin/questions.csv', requireAdmin, (req, res) => {
+  const list = readJson(QUERIES_PATH, []);
+  const date = String(req.query.date || '').trim();
+  let rows = list.map((e, idx) => {
+    const dt = toKstDateTimeParts(e.time);
+    return {
+      idx,
+      date: dt.date,
+      time: dt.time,
+      query: e.query || '',
+      result: e.matched ? '매칭' : '미매칭',
+      matchedTitle: e.matchedTitle || '',
+      source: e.source || ''
+    };
+  });
+  if (date) rows = rows.filter(r => r.date === date);
+  rows.sort((a, b) => b.idx - a.idx);
+  const csv = toCsv(rows, [
+    { key: 'date', label: '일자(KST)' },
+    { key: 'time', label: '시간(KST)' },
+    { key: 'query', label: '질문' },
+    { key: 'result', label: '결과' },
+    { key: 'matchedTitle', label: '연결 항목' },
+    { key: 'source', label: '유입경로' }
+  ]);
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="all-questions.csv"');
+  res.send(csv);
+});
+
+// 놓친 질문 원본 내역: 빈도 요약과 별도로 날짜별로 하나씩 확인
+app.get('/api/admin/missed-detail', requireAdmin, (req, res) => {
+  const list = readJson(MISSED_PATH, []);
+  const date = String(req.query.date || '').trim();
+  const q = String(req.query.q || '').trim().toLowerCase();
+  const pageSize = Math.min(Math.max(Number(req.query.pageSize) || 200, 20), 500);
+  const page = Math.max(Number(req.query.page) || 1, 1);
+
+  let rows = list.map((e, idx) => {
+    const dt = toKstDateTimeParts(e.time);
+    return {
+      idx,
+      date: dt.date,
+      time: dt.time,
+      dateTime: dt.dateTime,
+      query: e.query || '',
+      bestGuessTitle: e.bestGuessTitle || '',
+      bestGuessScore: e.bestGuessScore === '' || e.bestGuessScore == null ? '' : e.bestGuessScore
+    };
+  });
+  if (date) rows = rows.filter(r => r.date === date);
+  if (q) rows = rows.filter(r => (`${r.query} ${r.bestGuessTitle}`).toLowerCase().includes(q));
+  rows.sort((a, b) => b.idx - a.idx);
+
+  const total = rows.length;
+  const pages = Math.max(Math.ceil(total / pageSize), 1);
+  const safePage = Math.min(page, pages);
+  const start = (safePage - 1) * pageSize;
+  res.json({ total, page: safePage, pageSize, pages, items: rows.slice(start, start + pageSize) });
+});
+
+app.get('/api/admin/missed-detail.csv', requireAdmin, (req, res) => {
+  const list = readJson(MISSED_PATH, []);
+  const date = String(req.query.date || '').trim();
+  let rows = list.map((e, idx) => {
+    const dt = toKstDateTimeParts(e.time);
+    return {
+      idx,
+      date: dt.date,
+      time: dt.time,
+      query: e.query || '',
+      bestGuessTitle: e.bestGuessTitle || '',
+      bestGuessScore: e.bestGuessScore === '' || e.bestGuessScore == null ? '' : e.bestGuessScore
+    };
+  });
+  if (date) rows = rows.filter(r => r.date === date);
+  rows.sort((a, b) => b.idx - a.idx);
+  const csv = toCsv(rows, [
+    { key: 'date', label: '일자(KST)' },
+    { key: 'time', label: '시간(KST)' },
+    { key: 'query', label: '놓친 질문' },
+    { key: 'bestGuessTitle', label: '추정 항목' },
+    { key: 'bestGuessScore', label: '추정 점수' }
+  ]);
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename="missed-questions-daily.csv"');
+  res.send(csv);
 });
 
 app.get('/api/admin/stats/top.csv', requireAdmin, (req, res) => {
@@ -2913,8 +3047,6 @@ app.get('/admin', (req, res) => {
       <h2>전체 통계 <button class="ghost" id="refreshBtn" style="height:32px;padding:0 10px;font-size:12px">새로고침</button></h2>
       <div class="summary4" id="summary4"></div>
       <div class="gap small muted" id="statsMeta"></div>
-      <div class="gap"><b class="small">인기 질문 TOP</b> <a class="dl" id="topCsv" href="#">CSV 다운로드</a></div>
-      <table id="topTable"><thead><tr><th>항목</th><th>건수</th></tr></thead><tbody></tbody></table>
     </div>
 
     <div class="card">
@@ -2929,9 +3061,53 @@ app.get('/admin', (req, res) => {
     </div>
 
     <div class="card">
-      <h2>놓친 질문 (빈도순) <a class="dl" id="missedCsv" href="#">CSV 다운로드</a></h2>
+      <h2>전체 질문 내역 <a class="dl" id="questionsCsv" href="#">전체 CSV 다운로드</a></h2>
+      <div class="small muted">모든 질문을 한국시간(KST) 기준 일자·시간과 함께 확인할 수 있습니다. 날짜를 선택하면 해당 날짜 질문만 볼 수 있어요.</div>
+      <div class="row gap">
+        <input id="questionDate" type="date" style="height:38px;border:1px solid #cfd6dd;border-radius:9px;padding:0 9px">
+        <input id="questionSearch" type="text" placeholder="질문 또는 연결 항목 검색" style="flex:1;min-width:180px;height:38px">
+        <button id="questionFilterBtn" class="ghost" style="height:38px">조회</button>
+        <button id="questionResetBtn" class="ghost" style="height:38px">전체</button>
+      </div>
+      <div class="small muted gap" id="questionMeta"></div>
+      <div style="overflow-x:auto" class="gap">
+        <table id="questionsTable">
+          <thead><tr><th>일자</th><th>시간</th><th>질문</th><th>결과</th><th>연결 항목</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="row gap" style="justify-content:flex-end">
+        <button id="questionPrev" class="ghost" style="height:34px">이전</button>
+        <button id="questionNext" class="ghost" style="height:34px">다음</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>놓친 질문 요약 (빈도순) <a class="dl" id="missedCsv" href="#">요약 CSV 다운로드</a></h2>
       <div class="small muted">같은 뜻으로 보이는 질문은 하나로 묶어서 보여줘요. 자주 놓친 질문부터 학습시키는 걸 추천해요.</div>
       <table id="missedTable"><thead><tr><th>질문</th><th>횟수</th><th>추정 항목</th><th>학습 등록</th></tr></thead><tbody></tbody></table>
+    </div>
+
+    <div class="card">
+      <h2>놓친 질문 일별 내역 <a class="dl" id="missedDetailCsv" href="#">전체 CSV 다운로드</a></h2>
+      <div class="small muted">놓친 질문을 묶지 않고 실제 발생한 날짜·시간별로 하나씩 보여줍니다.</div>
+      <div class="row gap">
+        <input id="missedDate" type="date" style="height:38px;border:1px solid #cfd6dd;border-radius:9px;padding:0 9px">
+        <input id="missedSearch" type="text" placeholder="놓친 질문 검색" style="flex:1;min-width:180px;height:38px">
+        <button id="missedFilterBtn" class="ghost" style="height:38px">조회</button>
+        <button id="missedResetBtn" class="ghost" style="height:38px">전체</button>
+      </div>
+      <div class="small muted gap" id="missedDetailMeta"></div>
+      <div style="overflow-x:auto" class="gap">
+        <table id="missedDetailTable">
+          <thead><tr><th>일자</th><th>시간</th><th>놓친 질문</th><th>추정 항목</th><th>점수</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="row gap" style="justify-content:flex-end">
+        <button id="missedPrev" class="ghost" style="height:34px">이전</button>
+        <button id="missedNext" class="ghost" style="height:34px">다음</button>
+      </div>
     </div>
 
     <div class="card">
@@ -2944,6 +3120,8 @@ app.get('/admin', (req, res) => {
 function esc(v){return String(v??'').replace(/[&<>"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m]));}
 let TOKEN = sessionStorage.getItem('adminToken') || '';
 let BLOCKS = [];
+let QUESTION_PAGE = 1;
+let MISSED_PAGE = 1;
 
 async function api(path, opts){
   opts = opts || {};
@@ -2976,11 +3154,12 @@ async function login(){
 }
 
 async function loadAll(){
-  document.getElementById('topCsv').href = '/api/admin/stats/top.csv?token=' + encodeURIComponent(TOKEN);
   document.getElementById('dailyCsv').href = '/api/admin/stats/daily.csv?token=' + encodeURIComponent(TOKEN);
+  document.getElementById('questionsCsv').href = '/api/admin/questions.csv?token=' + encodeURIComponent(TOKEN);
   document.getElementById('missedCsv').href = '/api/admin/missed.csv?token=' + encodeURIComponent(TOKEN);
+  document.getElementById('missedDetailCsv').href = '/api/admin/missed-detail.csv?token=' + encodeURIComponent(TOKEN);
   BLOCKS = await api('/api/admin/blocks');
-  await Promise.all([loadStats(), loadMissed(), loadLearned()]);
+  await Promise.all([loadStats(), loadQuestions(), loadMissed(), loadMissedDetail(), loadLearned()]);
 }
 
 async function loadStats(){
@@ -2992,10 +3171,6 @@ async function loadStats(){
     ['1인당 평균 질문', s.avgQueriesPerVisitor]
   ].map(([l,n])=>'<div class="stat"><div class="n">'+esc(n)+'</div><div class="l">'+esc(l)+'</div></div>').join('');
   document.getElementById('statsMeta').textContent = '매칭 ' + s.matchedCount + '건 / 미매칭 ' + s.unmatchedCount + '건 / 저장: ' + (s.storage === 'supabase' ? 'Supabase 영구보존' : 'Render 로컬');
-  document.querySelector('#topTable tbody').innerHTML = (s.topBlocks||[]).map(b=>
-    '<tr><td>'+esc(b.title)+'</td><td>'+esc(b.count)+'</td></tr>'
-  ).join('') || '<tr><td colspan="2" class="muted">데이터가 없어요.</td></tr>';
-
   document.querySelector('#dailyTable tbody').innerHTML = (s.days||[]).map(d=>
     '<tr>'+
       '<td>'+esc(d.date)+'</td>'+
@@ -3006,6 +3181,58 @@ async function loadStats(){
       '<td>'+esc(d.matchRate)+'%</td>'+
     '</tr>'
   ).join('') || '<tr><td colspan="6" class="muted">아직 일별 통계가 없어요.</td></tr>';
+}
+
+async function loadQuestions(page){
+  if (page != null) QUESTION_PAGE = Math.max(Number(page)||1, 1);
+  const date = document.getElementById('questionDate').value || '';
+  const q = document.getElementById('questionSearch').value.trim();
+  const params = new URLSearchParams({ page:String(QUESTION_PAGE), pageSize:'200' });
+  if (date) params.set('date', date);
+  if (q) params.set('q', q);
+  const d = await api('/api/admin/questions?' + params.toString());
+  QUESTION_PAGE = d.page || 1;
+  document.getElementById('questionMeta').textContent = '전체 ' + d.total + '건 · ' + QUESTION_PAGE + '/' + d.pages + '페이지 (페이지당 최대 200건)';
+  document.querySelector('#questionsTable tbody').innerHTML = (d.items||[]).map(e=>
+    '<tr>'+ 
+      '<td>'+esc(e.date)+'</td>'+ 
+      '<td>'+esc(e.time)+'</td>'+ 
+      '<td>'+esc(e.query)+'</td>'+ 
+      '<td>'+(e.matched ? '<span class="badge ok">매칭</span>' : '<span class="badge" style="background:#fde8e8;color:#b02a2a">미매칭</span>')+'</td>'+ 
+      '<td class="small muted">'+esc(e.matchedTitle||'-')+'</td>'+ 
+    '</tr>'
+  ).join('') || '<tr><td colspan="5" class="muted">해당 조건의 질문이 없어요.</td></tr>';
+  document.getElementById('questionPrev').disabled = QUESTION_PAGE <= 1;
+  document.getElementById('questionNext').disabled = QUESTION_PAGE >= (d.pages||1);
+  const csvParams = new URLSearchParams({ token:TOKEN });
+  if (date) csvParams.set('date', date);
+  document.getElementById('questionsCsv').href = '/api/admin/questions.csv?' + csvParams.toString();
+}
+
+async function loadMissedDetail(page){
+  if (page != null) MISSED_PAGE = Math.max(Number(page)||1, 1);
+  const date = document.getElementById('missedDate').value || '';
+  const q = document.getElementById('missedSearch').value.trim();
+  const params = new URLSearchParams({ page:String(MISSED_PAGE), pageSize:'200' });
+  if (date) params.set('date', date);
+  if (q) params.set('q', q);
+  const d = await api('/api/admin/missed-detail?' + params.toString());
+  MISSED_PAGE = d.page || 1;
+  document.getElementById('missedDetailMeta').textContent = '전체 ' + d.total + '건 · ' + MISSED_PAGE + '/' + d.pages + '페이지 (페이지당 최대 200건)';
+  document.querySelector('#missedDetailTable tbody').innerHTML = (d.items||[]).map(e=>
+    '<tr>'+ 
+      '<td>'+esc(e.date)+'</td>'+ 
+      '<td>'+esc(e.time)+'</td>'+ 
+      '<td>'+esc(e.query)+'</td>'+ 
+      '<td class="small muted">'+esc(e.bestGuessTitle||'-')+'</td>'+ 
+      '<td class="small muted">'+esc(e.bestGuessScore===''?'-':e.bestGuessScore)+'</td>'+ 
+    '</tr>'
+  ).join('') || '<tr><td colspan="5" class="muted">해당 조건의 놓친 질문이 없어요.</td></tr>';
+  document.getElementById('missedPrev').disabled = MISSED_PAGE <= 1;
+  document.getElementById('missedNext').disabled = MISSED_PAGE >= (d.pages||1);
+  const csvParams = new URLSearchParams({ token:TOKEN });
+  if (date) csvParams.set('date', date);
+  document.getElementById('missedDetailCsv').href = '/api/admin/missed-detail.csv?' + csvParams.toString();
 }
 
 async function loadMissed(){
@@ -3054,6 +3281,18 @@ async function loadLearned(){
     });
   });
 }
+
+document.getElementById('questionFilterBtn').addEventListener('click', ()=>{ QUESTION_PAGE=1; loadQuestions(); });
+document.getElementById('questionResetBtn').addEventListener('click', ()=>{ document.getElementById('questionDate').value=''; document.getElementById('questionSearch').value=''; QUESTION_PAGE=1; loadQuestions(); });
+document.getElementById('questionSearch').addEventListener('keydown', e=>{ if(e.key==='Enter'){ QUESTION_PAGE=1; loadQuestions(); } });
+document.getElementById('questionPrev').addEventListener('click', ()=>loadQuestions(QUESTION_PAGE-1));
+document.getElementById('questionNext').addEventListener('click', ()=>loadQuestions(QUESTION_PAGE+1));
+
+document.getElementById('missedFilterBtn').addEventListener('click', ()=>{ MISSED_PAGE=1; loadMissedDetail(); });
+document.getElementById('missedResetBtn').addEventListener('click', ()=>{ document.getElementById('missedDate').value=''; document.getElementById('missedSearch').value=''; MISSED_PAGE=1; loadMissedDetail(); });
+document.getElementById('missedSearch').addEventListener('keydown', e=>{ if(e.key==='Enter'){ MISSED_PAGE=1; loadMissedDetail(); } });
+document.getElementById('missedPrev').addEventListener('click', ()=>loadMissedDetail(MISSED_PAGE-1));
+document.getElementById('missedNext').addEventListener('click', ()=>loadMissedDetail(MISSED_PAGE+1));
 
 document.getElementById('loginBtn').addEventListener('click', login);
 document.getElementById('token').addEventListener('keydown', e=>{ if(e.key==='Enter') login(); });
