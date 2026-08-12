@@ -979,6 +979,12 @@ function normalizeHqContactSearchQuery(rawQuery) {
   const compact = compactText(q);
   if (/^다자녀(?:지원|지원금|입학지원|입학지원금|교육비지원)?$/.test(compact)) return '다자녀';
 
+  // 인사 업무는 시나리오의 '부패·공익신고' 같은 다른 항목으로 유사매칭되지 않도록
+  // 공식 업무분장에서 쓰는 표현으로 정규화합니다.
+  // 띄어쓰기 여부와 관계없이 동일하게 처리합니다.
+  if (/^(?:지방)?공무원인사$/.test(compact)) return '지방공무원 인사';
+  if (/^교원인사$/.test(compact)) return '교원 인사';
+
   return q;
 }
 
@@ -1052,6 +1058,23 @@ function hqContactQueryCore(rawQuery) {
     .replace(/\s+/g, ' ')
     .trim();
   return normalizeHqContactSearchQuery(q);
+}
+
+function detectImplicitPersonnelContactIntent(rawQuery) {
+  let q = compactText(String(rawQuery || ''));
+  if (!q) return null;
+
+  // 기관명과 일반적인 질문 표현은 제거하고 핵심 업무명만 판단합니다.
+  q = q
+    .replace(/경상남도교육청|경남교육청|교육청|본청/g, '')
+    .replace(/담당자|담당부서|담당과|담당|업무|검색|조회|안내|문의|전화번호|전화|연락처/g, '')
+    .replace(/알려줘|알려주세요|찾아줘|찾아주세요|어디야|어디예요|어디에요/g, '')
+    .replace(/[^가-힣a-z0-9]/gi, '');
+
+  if (/^(?:지방)?공무원인사$/.test(q)) return { query: '지방공무원 인사' };
+  if (/^교원인사$/.test(q)) return { query: '교원 인사' };
+
+  return null;
 }
 
 function detectHqContactIntent(rawQuery) {
@@ -1486,6 +1509,59 @@ async function searchGneHqContactsForWeb(query) {
   return filtered;
 }
 
+
+// '공사'는 계약업무(재정과)와 시설공사업무(시설과)가 함께 검색될 수 있어
+// 사용자에게 두 분야를 나누어 보여줍니다.
+function isAmbiguousConstructionQuery(query) {
+  const core = compactText(normalizeHqContactSearchQuery(query));
+  return /^(공사|공사업무|공사관련|공사담당|공사담당자|공사문의)$/.test(core);
+}
+
+function sortHqRowsForDisplay(rows) {
+  return (rows || []).slice().sort((a, b) =>
+    String(a.team || '').localeCompare(String(b.team || ''), 'ko') ||
+    String(a.phone || '').localeCompare(String(b.phone || ''), 'ko')
+  );
+}
+
+async function getConstructionContactGroups() {
+  const allRows = await getAllGneHqContacts();
+  const usable = (allRows || []).filter(row => !isExcludedHqLeadershipRow(row));
+
+  const deptIs = (row, dept) => compactText(row && row.department || '') === compactText(dept);
+  const dutyText = row => compactText(row && row.duty || '');
+
+  // 재정과: 공사 '계약/입찰'과 직접 관련된 업무를 우선합니다.
+  let finance = usable.filter(row => {
+    if (!deptIs(row, '재정과')) return false;
+    const d = dutyText(row);
+    return d.includes('공사') && /(계약|입찰|낙찰|계약관리|전자계약)/.test(d);
+  });
+  // 공식 업무분장 표현에 '공사'가 생략된 경우를 대비해 계약/입찰 담당을 보완합니다.
+  if (!finance.length) {
+    finance = usable.filter(row => {
+      if (!deptIs(row, '재정과')) return false;
+      const d = dutyText(row);
+      return /(계약|입찰|낙찰|전자계약)/.test(d);
+    });
+  }
+
+  // 시설과: 실제 시설공사/공사관리 업무가 들어 있는 행만 우선합니다.
+  let facility = usable.filter(row => {
+    if (!deptIs(row, '시설과')) return false;
+    const d = dutyText(row);
+    return d.includes('공사') || d.includes('시설공사');
+  });
+  if (!facility.length) {
+    facility = usable.filter(row => deptIs(row, '시설과') && /(시설|건축|토목|전기|기계|공사)/.test(dutyText(row)));
+  }
+
+  return {
+    finance: sortHqRowsForDisplay(finance),
+    facility: sortHqRowsForDisplay(facility)
+  };
+}
+
 function extractHqWorkParamFromPayload(body) {
   const action = (body && body.action) || {};
   const params = action.params || {};
@@ -1573,6 +1649,35 @@ async function kakaoHqContactResponse(intent) {
   if (!query) return kakaoHqContactAskResponse();
 
   try {
+    if (isAmbiguousConstructionQuery(query)) {
+      const groups = await getConstructionContactGroups();
+      const finance = (groups.finance || []).slice(0, 2);
+      const facility = (groups.facility || []).slice(0, 2);
+      const lines = [
+        "'공사'는 담당 분야에 따라 부서가 달라요.",
+        '',
+        '💰 계약·입찰 등 계약 관련 → 재정과',
+        '🏗️ 시설공사 추진·관리 등 공사 관련 → 시설과'
+      ];
+      if (finance.length) {
+        lines.push('', '재정과 업무담당자');
+        finance.forEach(c => lines.push(`☎ ${c.phone} · ${truncateOfficialDuty(c.duty, 80)}`));
+      }
+      if (facility.length) {
+        lines.push('', '시설과 업무담당자');
+        facility.forEach(c => lines.push(`☎ ${c.phone} · ${truncateOfficialDuty(c.duty, 80)}`));
+      }
+      return {
+        version: '2.0',
+        template: {
+          outputs: [{ simpleText: { text: lines.join('\n').slice(0, 950) } }],
+          quickReplies: [
+            { label: '💰 계약 관련(재정과)', action: 'message', messageText: '재정과 공사 계약 담당자' },
+            { label: '🏗️ 공사 관련(시설과)', action: 'message', messageText: '시설과 공사 담당자' }
+          ]
+        }
+      };
+    }
     const contacts = await searchGneHqContacts(query);
     const text = kakaoHqContactResponseText(query, contacts);
     const outputs = [{ simpleText: { text } }];
@@ -2475,6 +2580,7 @@ app.get('/staff-search', (req, res) => {
   .regions,.depts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.region-link,.dept-link{display:block;text-decoration:none;text-align:center;border:1px solid #dfe4e8;background:#fff;border-radius:10px;padding:10px 7px;color:#222;font-size:13px;font-weight:700;cursor:pointer}.dept-count{display:block;font-size:11px;color:#888;font-weight:500;margin-top:2px}
   #status{font-size:14px;color:#666;margin:16px 2px 8px}.result{background:#fff;border-radius:14px;padding:15px 16px;margin-top:10px;box-shadow:0 1px 8px rgba(0,0,0,.05)}
   .dept{font-weight:800;font-size:16px;margin-bottom:6px}.phone{display:inline-block;margin:2px 0 8px;font-weight:700;color:#1b5dbf;text-decoration:none}.duty{font-size:14px;line-height:1.55;white-space:pre-wrap;color:#444}
+  .clarify{background:#fff7cc;border:1px solid #ffe36b;border-radius:14px;padding:14px 15px;margin-top:10px;line-height:1.55}.clarify-title{font-weight:800;margin-bottom:4px}.group{margin-top:14px}.group-title{font-size:16px;font-weight:800;margin:0 0 8px}.group-desc{font-size:13px;color:#666;margin:-3px 0 8px}.group .result{margin-top:8px;border:1px solid #eef1f4;box-shadow:none}
   .notice{font-size:12px;line-height:1.55;color:#777;margin-top:16px}.empty{background:#fff;border-radius:14px;padding:18px;margin-top:10px;color:#555}
   @media(min-width:560px){.regions,.depts{grid-template-columns:repeat(3,minmax(0,1fr))}}
 </style>
@@ -2495,6 +2601,7 @@ app.get('/staff-search', (req, res) => {
       <button class="chip" data-q="고등학교 전입학">고등학교 전입학</button>
       <button class="chip" data-q="검정고시">검정고시</button>
       <button class="chip" data-q="직업교육">직업교육</button>
+      <button class="chip" data-q="공사">공사</button>
     </div>
     <div id="status"></div>
     <div id="results"></div>
@@ -2564,13 +2671,25 @@ async function search(){
     const r=await fetch('/api/hq-contact?query='+encodeURIComponent(query),{cache:'no-store'});
     const d=await r.json();
     if(!r.ok||!d.ok) throw new Error(d.message||'검색에 실패했습니다.');
+    const renderContact=c=>{
+      const p=tel(c.phone), phone=p?'<a class="phone" href="tel:'+p.replace(/-/g,'')+'">☎ '+esc(p)+'</a>':'<div class="phone">☎ '+esc(c.phone||'')+'</div>';
+      return '<div class="result"><div class="dept">'+esc(c.department||'')+(c.team?' / '+esc(c.team):'')+'</div>'+phone+'<div class="duty">'+esc(c.duty||'')+'</div></div>';
+    };
+    if(d.disambiguation==='construction'){
+      const finance=Array.isArray(d.groups&&d.groups.finance)?d.groups.finance:[];
+      const facility=Array.isArray(d.groups&&d.groups.facility)?d.groups.facility:[];
+      const total=finance.length+facility.length;
+      status.textContent="'공사' 관련 업무를 분야별로 나눠 안내합니다.";
+      results.innerHTML='<div class="clarify"><div class="clarify-title">어떤 공사 업무를 찾으시나요?</div>계약·입찰 등 <b>계약 관련은 재정과</b>, 시설공사 추진·관리 등 <b>공사 관련은 시설과</b>에서 확인해 주세요.</div>'+
+        '<div class="group"><div class="group-title">💰 계약 관련 · 재정과</div><div class="group-desc">공사 계약·입찰 등 계약 업무담당자</div>'+(finance.length?finance.map(renderContact).join(''):'<div class="empty">재정과의 공사 계약 관련 업무담당자를 찾지 못했습니다.</div>')+'</div>'+
+        '<div class="group"><div class="group-title">🏗️ 공사 관련 · 시설과</div><div class="group-desc">시설공사 추진·관리 등 공사 업무담당자</div>'+(facility.length?facility.map(renderContact).join(''):'<div class="empty">시설과의 공사 관련 업무담당자를 찾지 못했습니다.</div>')+'</div>';
+      setTimeout(()=>status.scrollIntoView({behavior:'smooth',block:'start'}),30);
+      return;
+    }
     const list=Array.isArray(d.contacts)?d.contacts:[];
     status.textContent="'"+query+"' 검색 결과 "+list.length+"건";
     if(!list.length){results.innerHTML='<div class="empty">본청 관련 실무담당자를 찾지 못했습니다. 지역교육지원청 소관 업무라면 아래의 <b>지역교육청 안내</b>를 이용해 주세요.</div>';return;}
-    results.innerHTML=list.map(c=>{
-      const p=tel(c.phone), phone=p?'<a class="phone" href="tel:'+p.replace(/-/g,'')+'">☎ '+esc(p)+'</a>':'<div class="phone">☎ '+esc(c.phone||'')+'</div>';
-      return '<div class="result"><div class="dept">'+esc(c.department||'')+(c.team?' / '+esc(c.team):'')+'</div>'+phone+'<div class="duty">'+esc(c.duty||'')+'</div></div>';
-    }).join('');
+    results.innerHTML=list.map(renderContact).join('');
     setTimeout(()=>status.scrollIntoView({behavior:'smooth',block:'start'}),30);
   }catch(e){status.textContent='';results.innerHTML='<div class="empty">'+esc(e.message||'검색 중 오류가 발생했습니다.')+' 잠시 후 다시 이용해 주세요.</div>';}
   finally{btn.disabled=false;}
@@ -2595,6 +2714,18 @@ app.get('/api/hq-contact', async (req, res) => {
     });
   }
   try {
+    if (isAmbiguousConstructionQuery(query)) {
+      const groups = await getConstructionContactGroups();
+      const count = (groups.finance || []).length + (groups.facility || []).length;
+      return res.json({
+        ok: true,
+        query,
+        count,
+        disambiguation: 'construction',
+        groups,
+        officialUrl: GNE_HQ_WORK_SEARCH_URL
+      });
+    }
     const contacts = await searchGneHqContactsForWeb(query);
     return res.json({ ok: true, query, count: contacts.length, contacts, officialUrl: GNE_HQ_WORK_SEARCH_URL });
   } catch (err) {
@@ -3295,6 +3426,24 @@ app.post('/api/kakao-skill', async (req, res) => {
     resetKakaoTransferFailStreak(kakaoUserId);
     trackQuery(utterance, `본청 업무담당자:${hqWorkParam}`, true, 'kakao-live-hq-contact-param', 'kakao:' + kakaoUserId, kakaoInteraction);
     return res.json(withStaffSearchQuickReply(await kakaoHqContactResponse({ query: hqWorkParam })));
+  }
+
+  // '공무원 인사', '교원 인사'는 '담당자'라는 단어가 없어도
+  // 본청 업무담당자 검색으로 바로 보냅니다.
+  // 유사도 기반 시나리오 매칭이 '부패·공익신고' 등 다른 항목을 고르는 것을 방지합니다.
+  const implicitPersonnelIntent = detectImplicitPersonnelContactIntent(utterance);
+  if (implicitPersonnelIntent) {
+    resetKakaoFailStreak(kakaoUserId);
+    resetKakaoTransferFailStreak(kakaoUserId);
+    trackQuery(
+      utterance,
+      `본청 업무담당자:${implicitPersonnelIntent.query}`,
+      true,
+      'kakao-live-hq-personnel-contact',
+      'kakao:' + kakaoUserId,
+      kakaoInteraction
+    );
+    return res.json(withStaffSearchQuickReply(await kakaoHqContactResponse(implicitPersonnelIntent)));
   }
 
   // 전입학 담당자/전화번호 질문은 시나리오 매칭보다 먼저 처리합니다.
