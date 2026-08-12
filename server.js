@@ -2532,6 +2532,465 @@ app.get('/api/transfer-contact', async (req, res) => {
   }
 });
 
+
+// ============ 경상남도교육청 공식 누리집 자동검색 ============
+// 시나리오에 없는 정책/사업/안내 질문은 경남교육청 공식 통합검색(search.gne.go.kr)을 조회합니다.
+// 생성형 AI 없이 공식 검색결과의 제목/본문 일부/링크만 사용하므로 자료에 없는 내용을 임의 생성하지 않습니다.
+const GNE_OFFICIAL_SEARCH_URL = 'https://search.gne.go.kr/home/front/Search.jsp';
+const GNE_OFFICIAL_SEARCH_FORM_TTL_MS = 12 * 60 * 60 * 1000;
+const GNE_OFFICIAL_SEARCH_QUERY_TTL_MS = 30 * 60 * 1000;
+const GNE_OFFICIAL_SEARCH_MAX_RESULTS = 5;
+let GNE_OFFICIAL_SEARCH_FORM_CACHE = null;
+const GNE_OFFICIAL_SEARCH_QUERY_CACHE = new Map();
+
+function normalizeOfficialSearchText(value) {
+  return String(value || '')
+    .replace(/경상남도교육청|경남교육청|경남교육|교육청\s*본청|교육청/gi, ' ')
+    .replace(/[?!.~]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function officialSearchCore(rawQuery) {
+  let q = normalizeOfficialSearchText(rawQuery);
+  if (!q) return '';
+
+  q = q
+    .replace(/(?:에\s*대해|에\s*대한|관련해서|관련하여|관련된)\s*/g, ' ')
+    .replace(/(?:알려\s*줘|알려주세요|알려\s*주세요|찾아\s*줘|찾아주세요|찾아\s*주세요|검색\s*해줘|검색해주세요|궁금해|궁금합니다|확인해줘|확인해주세요)$/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  let tokens = (q.match(/[가-힣A-Za-z0-9]+/g) || []).filter(Boolean);
+  const generic = new Set(['안내','관련','정보','자료','내용','알려줘','알려주세요','검색','확인','문의']);
+  tokens = tokens.filter(t => !generic.has(t));
+
+  // 예) '유보통합 추진 안내' -> '유보통합', '다자녀 지원 안내' -> '다자녀'
+  const tailGeneric = new Set(['추진','운영','사업','정책','계획','지원','신청','접수','발급','신고','방법','절차']);
+  if (tokens.length >= 2 && tailGeneric.has(tokens[tokens.length - 1])) tokens.pop();
+
+  let core = tokens.join(' ').trim() || q;
+  const compact = core.replace(/\s+/g, '');
+  for (const suffix of ['추진안내','사업안내','정책안내','운영안내','추진','안내']) {
+    if (compact.endsWith(suffix)) {
+      const stem = compact.slice(0, -suffix.length);
+      if (stem.length >= 2) {
+        core = stem;
+        break;
+      }
+    }
+  }
+  return core.trim();
+}
+
+function shouldTryOfficialGneSearch(rawQuery) {
+  const raw = String(rawQuery || '').trim();
+  const core = officialSearchCore(raw);
+  if (!core || compactText(core).length < 2) return false;
+  if (!/[가-힣A-Za-z]/.test(core)) return false;
+
+  const compact = compactText(raw);
+  if (/^(안녕|안녕하세요|하이|헬로|고마워|감사|감사합니다|땡큐|잘가|종료|끝|취소|네|넵|응|웅|ㅇㅇ)$/.test(compact)) return false;
+  if (/^(뭐해|뭐함|심심해|배고파|사랑해|ㅋㅋ+|ㅎㅎ+|ㅠ+|ㅜ+)$/.test(compact)) return false;
+  return true;
+}
+
+function discoverGneOfficialSearchFormFromHtml(html) {
+  const forms = [];
+  const formRe = /<form\b([^>]*)>([\s\S]*?)<\/form>/gi;
+  let fm;
+  while ((fm = formRe.exec(String(html || ''))) !== null) {
+    const formAttrs = parseHtmlAttrs(fm[1]);
+    const inner = fm[2];
+    const inputs = [];
+    const inputRe = /<input\b([^>]*)>/gi;
+    let im;
+    while ((im = inputRe.exec(inner)) !== null) {
+      const a = parseHtmlAttrs(im[1]);
+      if (a.name) inputs.push(a);
+    }
+
+    const searchInput = inputs.find(a => {
+      const type = String(a.type || 'text').toLowerCase();
+      if (!['text','search'].includes(type)) return false;
+      const hint = `${a.name || ''} ${a.id || ''} ${a.placeholder || ''}`.toLowerCase();
+      return /(query|keyword|search|searchword|searchtext|kwd|qt|검색어)/.test(hint);
+    }) || inputs.find(a => ['text','search'].includes(String(a.type || 'text').toLowerCase()));
+    if (!searchInput) continue;
+
+    const action = String(formAttrs.action || '');
+    const plain = htmlFragmentToText(inner);
+    let score = 0;
+    if (/Search\.jsp/i.test(action)) score += 100;
+    if (/통합검색|검색어/.test(plain)) score += 40;
+    if (/(query|keyword|search|kwd|qt)/i.test(searchInput.name || '')) score += 25;
+
+    const hidden = {};
+    inputs.forEach(a => {
+      if (String(a.type || '').toLowerCase() === 'hidden' && a.name) hidden[a.name] = a.value || '';
+    });
+
+    forms.push({
+      score,
+      method: String(formAttrs.method || 'GET').toUpperCase(),
+      action: action || GNE_OFFICIAL_SEARCH_URL,
+      queryField: searchInput.name,
+      hidden
+    });
+  }
+
+  if (!forms.length) return null;
+  forms.sort((a,b) => b.score - a.score);
+  const best = forms[0];
+  try { best.action = new URL(best.action, GNE_OFFICIAL_SEARCH_URL).href; }
+  catch (_) { best.action = GNE_OFFICIAL_SEARCH_URL; }
+  return best;
+}
+
+async function getGneOfficialSearchForm() {
+  if (GNE_OFFICIAL_SEARCH_FORM_CACHE && Date.now() - GNE_OFFICIAL_SEARCH_FORM_CACHE.updatedAt < GNE_OFFICIAL_SEARCH_FORM_TTL_MS) {
+    return GNE_OFFICIAL_SEARCH_FORM_CACHE.form;
+  }
+  const html = await fetchOfficialGneHtml(GNE_OFFICIAL_SEARCH_URL, 1800);
+  const form = discoverGneOfficialSearchFormFromHtml(html);
+  if (!form || !form.queryField) throw new Error('경남교육청 통합검색 입력 항목을 찾지 못했습니다.');
+  GNE_OFFICIAL_SEARCH_FORM_CACHE = { updatedAt: Date.now(), form };
+  return form;
+}
+
+async function fetchGneOfficialSearchHtml(query, timeoutMs = 2500) {
+  const form = await getGneOfficialSearchForm();
+  const params = new URLSearchParams({ ...(form.hidden || {}), [form.queryField]: query });
+  const method = String(form.method || 'GET').toUpperCase();
+  const headers = {
+    'accept': 'text/html,application/xhtml+xml',
+    'user-agent': 'GNE-1004-Chatbot/1.0',
+    'referer': GNE_OFFICIAL_SEARCH_URL
+  };
+  let url = form.action || GNE_OFFICIAL_SEARCH_URL;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const options = { method, signal: controller.signal, headers };
+    if (method === 'GET') {
+      url += (url.includes('?') ? '&' : '?') + params.toString();
+    } else {
+      headers['content-type'] = 'application/x-www-form-urlencoded; charset=UTF-8';
+      options.body = params.toString();
+    }
+    const response = await fetch(url, options);
+    if (!response.ok) throw new Error(`경남교육청 통합검색 HTTP ${response.status}`);
+    return { html: await response.text(), searchUrl: response.url || url };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function officialGneUrlFromRaw(rawUrl, baseUrl = GNE_OFFICIAL_SEARCH_URL) {
+  let value = decodeHtmlEntities(String(rawUrl || '')).trim();
+  if (!value || /^javascript:void/i.test(value) || value === '#') return '';
+
+  if (/^\/(?:www|user|pr|works|common|upload|files?)\//i.test(value)) {
+    value = `https://www.gne.go.kr${value}`;
+  }
+
+  if (/^javascript:/i.test(value)) {
+    const m = value.match(/https?:\\?\/\\?\/[A-Za-z0-9._-]*gne\.go\.kr[^'"\s)]+/i);
+    value = m ? m[0].replace(/\\\//g, '/') : '';
+  }
+  if (!value) return '';
+
+  try {
+    let u = new URL(value, baseUrl);
+
+    if (u.hostname === 'search.gne.go.kr') {
+      for (const key of ['url','targetUrl','target','link','href','realUrl','moveUrl']) {
+        const nested = u.searchParams.get(key);
+        if (!nested) continue;
+        try {
+          const nu = new URL(decodeURIComponent(nested), baseUrl);
+          if (nu.hostname === 'gne.go.kr' || nu.hostname.endsWith('.gne.go.kr')) u = nu;
+        } catch (_) {}
+      }
+    }
+
+    if (u.hostname === 'search.gne.go.kr') return '';
+    if (!(u.hostname === 'gne.go.kr' || u.hostname.endsWith('.gne.go.kr'))) return '';
+    u.hash = '';
+    return u.href;
+  } catch (_) {
+    return '';
+  }
+}
+
+function officialResultType(url) {
+  const u = String(url || '');
+  if (/\/pr\/user\/bbs\/BD_selectBbs/i.test(u)) return '보도자료';
+  if (/\/user\/bbs\/BD_selectBbs/i.test(u)) return '게시자료';
+  if (/deptBsnsAsgn|bu\d+_organ|업무분장/i.test(u)) return '업무분장';
+  if (/\/www\/buseo|bu\d+_info/i.test(u)) return '부서안내';
+  if (/\.pdf(?:\?|$)|\.hwp[x]?(?:\?|$)|\.docx?(?:\?|$)|\.xlsx?(?:\?|$)/i.test(u)) return '첨부자료';
+  return '공식페이지';
+}
+
+function cleanOfficialSearchSnippet(text, title) {
+  let value = String(text || '').replace(/\s+/g, ' ').trim();
+  if (title) value = value.replace(String(title), ' ');
+  value = value
+    .replace(/통합검색|검색결과|검색어|상세보기|새창열림|바로가기/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (value.length > 220) value = value.slice(0, 219).trimEnd() + '…';
+  return value;
+}
+
+function parseGneOfficialSearchResults(html, query) {
+  const source = String(html || '');
+  const queryCore = compactText(query);
+  const tokens = (String(query || '').match(/[가-힣A-Za-z0-9]+/g) || []).map(compactText).filter(t => t.length >= 2);
+  const candidates = [];
+  const anchorRe = /<a\b([^>]*)>([\s\S]*?)<\/a>/gi;
+  let am;
+  let order = 0;
+
+  while ((am = anchorRe.exec(source)) !== null) {
+    const attrs = parseHtmlAttrs(am[1]);
+    const title = htmlFragmentToText(am[2]).replace(/\s+/g, ' ').trim();
+    if (!title || title.length < 2 || title.length > 180) continue;
+    if (/^(홈|HOME|통합검색|전체메뉴|로그인|검색|초기화|더보기|이전|다음|TOP)$/i.test(title)) continue;
+
+    let url = officialGneUrlFromRaw(attrs.href || attrs['data-url'] || attrs['data-href'] || '', GNE_OFFICIAL_SEARCH_URL);
+    if (!url) {
+      const attrText = `${am[1]} ${attrs.onclick || ''}`;
+      const m = attrText.match(/https?:\\?\/\\?\/[A-Za-z0-9._-]*gne\.go\.kr[^'"\s)<>]+/i);
+      if (m) url = officialGneUrlFromRaw(m[0].replace(/\\\//g, '/'), GNE_OFFICIAL_SEARCH_URL);
+      if (!url) {
+        const rel = attrText.match(/["'](\/(?:www|user|pr|works|common)\/[^"']+(?:\.do|\.jsp)(?:\?[^"']*)?)["']/i);
+        if (rel) url = officialGneUrlFromRaw(rel[1], 'https://www.gne.go.kr/');
+      }
+    }
+    if (!url) continue;
+
+    const start = Math.max(0, am.index - 420);
+    const end = Math.min(source.length, anchorRe.lastIndex + 900);
+    const context = htmlFragmentToText(source.slice(start, end));
+    const snippet = cleanOfficialSearchSnippet(context, title);
+    const titleC = compactText(title);
+    const snippetC = compactText(snippet);
+
+    let score = Math.max(0, 400 - order);
+    if (queryCore && titleC.includes(queryCore)) score += 300;
+    if (queryCore && snippetC.includes(queryCore)) score += 100;
+    let titleTokenHits = 0;
+    let snippetTokenHits = 0;
+    for (const token of tokens) {
+      if (titleC.includes(token)) { score += 70; titleTokenHits++; }
+      else if (snippetC.includes(token)) { score += 20; snippetTokenHits++; }
+    }
+    if (tokens.length && titleTokenHits === tokens.length) score += 130;
+    if (!titleTokenHits && !snippetTokenHits && queryCore && !titleC.includes(queryCore) && !snippetC.includes(queryCore)) continue;
+
+    const type = officialResultType(url);
+    if (type === '보도자료' || type === '게시자료') score += 120;
+    else if (type === '업무분장' || type === '부서안내') score += 30;
+
+    const dateMatch = context.match(/20\d{2}[.\/-]\s*\d{1,2}[.\/-]\s*\d{1,2}/);
+    const date = dateMatch ? dateMatch[0].replace(/\s+/g, '') : '';
+    candidates.push({ title, url, snippet, date, type, score, order: order++ });
+  }
+
+  const unique = new Map();
+  candidates.sort((a,b) => b.score - a.score || a.order - b.order).forEach(row => {
+    const key = `${row.url}|${compactText(row.title)}`;
+    if (!unique.has(key)) unique.set(key, row);
+  });
+  return [...unique.values()].slice(0, GNE_OFFICIAL_SEARCH_MAX_RESULTS);
+}
+
+function getFreshOfficialSearchCache(query) {
+  const key = compactText(query);
+  const item = GNE_OFFICIAL_SEARCH_QUERY_CACHE.get(key);
+  if (!item) return null;
+  if (Date.now() - item.updatedAt > GNE_OFFICIAL_SEARCH_QUERY_TTL_MS) {
+    GNE_OFFICIAL_SEARCH_QUERY_CACHE.delete(key);
+    return null;
+  }
+  return item.data;
+}
+
+function saveOfficialSearchCache(query, data) {
+  const key = compactText(query);
+  GNE_OFFICIAL_SEARCH_QUERY_CACHE.set(key, { updatedAt: Date.now(), data });
+  return data;
+}
+
+async function searchGneOfficialSite(rawQuery) {
+  const query = officialSearchCore(rawQuery);
+  if (!query) return { query: '', results: [] };
+  const cached = getFreshOfficialSearchCache(query);
+  if (cached) return cached;
+
+  try {
+    const { html, searchUrl } = await fetchGneOfficialSearchHtml(query, 2400);
+    const results = parseGneOfficialSearchResults(html, query);
+    return saveOfficialSearchCache(query, { query, results, searchUrl, source: '경상남도교육청 통합검색' });
+  } catch (err) {
+    console.error('경남교육청 공식 누리집 자동검색 오류:', err && err.message ? err.message : err);
+    return { query, results: [], error: true };
+  }
+}
+
+function extractOfficialPageExcerpt(html, title, query) {
+  let text = htmlFragmentToText(html);
+  if (!text) return '';
+  const titleText = String(title || '').trim();
+  let start = titleText ? text.indexOf(titleText) : -1;
+  if (start >= 0) start += titleText.length;
+  else {
+    const q = String(query || '').trim();
+    start = q ? text.indexOf(q) : -1;
+    if (start < 0) start = 0;
+  }
+
+  let segment = text.slice(Math.max(0, start), Math.max(0, start) + 1800)
+    .replace(/등록자명\s+[^\s]+/g, ' ')
+    .replace(/등록일시\s+20\d{2}[-./]\d{1,2}[-./]\d{1,2}/g, ' ')
+    .replace(/조회수\s+\d+/g, ' ')
+    .replace(/첨부파일|이전글|다음글|목록|담당자 정보|TOP/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (segment.length < 30) return '';
+  if (segment.length > 330) segment = segment.slice(0, 329).trimEnd() + '…';
+  return segment;
+}
+
+async function fetchOfficialPageExcerpt(result, query) {
+  if (!result || !result.url) return '';
+  if (!['보도자료','게시자료','공식페이지'].includes(result.type)) return '';
+  try {
+    const html = await fetchOfficialGneHtml(result.url, 950);
+    return extractOfficialPageExcerpt(html, result.title, query);
+  } catch (_) {
+    return '';
+  }
+}
+
+function searchCachedGneHqContactsOnly(query) {
+  const core = normalizeHqContactSearchQuery(query);
+  if (!core) return [];
+  let rows = [];
+  if (GNE_HQ_ALL_CONTACTS_CACHE && Array.isArray(GNE_HQ_ALL_CONTACTS_CACHE.rows)) {
+    rows = GNE_HQ_ALL_CONTACTS_CACHE.rows;
+  } else {
+    const persisted = loadPersistedHqContacts();
+    if (persisted && Array.isArray(persisted.rows)) rows = persisted.rows;
+  }
+  if (!rows.length) return [];
+  let ranked = rankHqContactRows(core, rows);
+  if (!ranked.length) {
+    for (const fallback of hqContactFallbackQueries(core)) {
+      ranked = rankHqContactRows(fallback, rows);
+      if (ranked.length) break;
+    }
+  }
+  return ranked;
+}
+
+function summarizeRelatedDepartmentFromContacts(query, contacts) {
+  if (!Array.isArray(contacts) || !contacts.length) return null;
+  const deptCounts = new Map();
+  contacts.forEach(row => {
+    const dept = String(row.department || '').trim();
+    if (!dept) return;
+    if (!deptCounts.has(dept)) deptCounts.set(dept, []);
+    deptCounts.get(dept).push(row);
+  });
+  const ranked = [...deptCounts.entries()].sort((a,b) => b[1].length - a[1].length);
+  if (!ranked.length) return null;
+  const [department, rows] = ranked[0];
+  const duties = [];
+  for (const row of rows) {
+    const duty = truncateOfficialDuty(row.duty || '', 100);
+    if (duty && !duties.some(x => compactText(x) === compactText(duty))) duties.push(duty);
+    if (duties.length >= 2) break;
+  }
+  return { department, duties, query };
+}
+
+async function buildGneOfficialSearchResponse(rawQuery) {
+  const search = await searchGneOfficialSite(rawQuery);
+  if (!search.results || !search.results.length) return null;
+
+  let related = null;
+  try {
+    const contactQuery = search.query || officialSearchCore(rawQuery);
+    const contacts = searchCachedGneHqContactsOnly(contactQuery);
+    related = summarizeRelatedDepartmentFromContacts(contactQuery, contacts);
+  } catch (_) {}
+
+  // 첫 번째 공식 게시물의 본문 일부를 1초 이내로만 읽어 옵니다.
+  const excerpt = await fetchOfficialPageExcerpt(search.results[0], search.query);
+
+  const lines = [`🔎 경상남도교육청 공식 누리집에서 '${search.query}' 관련 자료를 찾았어요.`];
+  if (related && related.department) {
+    lines.push('', `관련 부서: ${related.department}`);
+    if (related.duties.length) {
+      lines.push('관련 업무:');
+      related.duties.forEach(d => lines.push(`• ${d}`));
+    }
+  }
+  if (excerpt) lines.push('', '공식 자료 내용 일부:', excerpt);
+  lines.push('', '관련 공식 자료:');
+  search.results.slice(0, 3).forEach((r, i) => {
+    const meta = [r.type, r.date].filter(Boolean).join(' · ');
+    lines.push(`${i + 1}. ${r.title}${meta ? ` (${meta})` : ''}`);
+  });
+  lines.push('', '※ 경상남도교육청 공식 통합검색 결과를 바탕으로 안내하며, 자료에 없는 내용은 임의로 만들지 않습니다.');
+
+  const text = lines.join('\n').slice(0, 980);
+  const buttons = search.results.slice(0, 3).map((r, i) => ({
+    label: i === 0 ? '첫 번째 자료 보기' : `${i + 1}번째 자료 보기`,
+    action: 'webLink',
+    webLinkUrl: r.url
+  }));
+
+  const outputs = [{ simpleText: { text } }];
+  if (buttons.length) {
+    outputs.push({
+      basicCard: {
+        title: '경남교육청 공식 자료',
+        description: '검색된 공식 자료의 원문을 확인할 수 있어요.',
+        buttons
+      }
+    });
+  }
+
+  return {
+    version: '2.0',
+    template: { outputs },
+    meta: { query: search.query, relatedDepartment: related && related.department ? related.department : '', results: search.results }
+  };
+}
+
+async function warmGneOfficialSearchForm() {
+  try {
+    await getGneOfficialSearchForm();
+    console.log('✅ 경남교육청 공식 통합검색 폼 캐시 준비 완료');
+  } catch (err) {
+    console.error('경남교육청 공식 통합검색 폼 사전준비 오류:', err && err.message ? err.message : err);
+  }
+}
+
+// 브라우저에서 공식 누리집 자동검색이 실제로 동작하는지 확인하는 테스트 API
+// 예: /api/official-search?query=유보통합%20추진%20안내
+app.get('/api/official-search', async (req, res) => {
+  const query = String((req.query && req.query.query) || '').trim();
+  if (!query) return res.status(400).json({ ok: false, message: '검색어를 입력해 주세요.' });
+  const result = await searchGneOfficialSite(query);
+  return res.json({ ok: true, ...result, count: (result.results || []).length });
+});
+
 // ---- 카카오톡 오픈빌더 폴백 스킬 웹훅 ----
 // 1) 제목/등록발화와 매우 명확하게 일치하는 짧은 질문 -> 기존 고정답변
 // 2) 자연어·복합질문·후속질문 -> 관련 자료 여러 개 검색 -> 생성형 AI가 자료 안에서 답변
@@ -2614,6 +3073,25 @@ app.post('/api/kakao-skill', async (req, res) => {
     const assistantSummary = (block.responses || []).map(r => r.message || '').join('\n').slice(0, 1200);
     rememberTurn(kakaoUserId, utterance, assistantSummary);
     return res.json(withStaffSearchQuickReply({ version: '2.0', template: { outputs, quickReplies } }));
+  }
+
+  // 시나리오에서 답을 찾지 못한 정책/사업/제도 질문은 경남교육청 공식 통합검색으로 보완합니다.
+  // 유료 생성형 AI 없이 공식 누리집 결과만 사용하며, 검색 실패 시 기존 폴백으로 그대로 이어집니다.
+  if (shouldTryOfficialGneSearch(utterance)) {
+    try {
+      const officialResponse = await buildGneOfficialSearchResponse(utterance);
+      if (officialResponse) {
+        resetKakaoFailStreak(kakaoUserId);
+        resetKakaoTransferFailStreak(kakaoUserId);
+        const officialTitle = officialResponse.meta && officialResponse.meta.results && officialResponse.meta.results[0]
+          ? officialResponse.meta.results[0].title : '경남교육청 공식 누리집 검색';
+        trackQuery(utterance, `공식누리집:${officialTitle}`, true, 'kakao-gne-official-search', 'kakao:' + kakaoUserId);
+        const safe = { version: officialResponse.version, template: officialResponse.template };
+        return res.json(withStaffSearchQuickReply(safe));
+      }
+    } catch (err) {
+      console.error('카카오 공식 누리집 자동검색 처리 오류:', err && err.message ? err.message : err);
+    }
   }
 
   // 확신이 낮으면 1·2등 점수 차이를 보고 폴백. AI가 있을 때만 생성형 보조 사용
@@ -3386,6 +3864,11 @@ async function startServer() {
       console.error('본청 업무담당자 시작 캐시 최종 실패:', err && err.message ? err.message : err);
     });
   }, 250);
+
+  // 공식 통합검색의 검색 폼도 미리 읽어 두어 첫 민원인의 응답 지연을 줄입니다.
+  setTimeout(() => {
+    warmGneOfficialSearchForm();
+  }, 700);
 
   // 무료 Render에서 유휴 종료를 줄이고 싶을 때만 환경변수로 선택적으로 켭니다.
   startRenderKeepWarm();
