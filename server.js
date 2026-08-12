@@ -983,6 +983,19 @@ const HQ_CONTACT_ALIAS_GROUPS = Object.freeze([
     aliases: ['계약제교원', '기간제교원', '기간제교사', '계약제교사', '기간제선생님']
   },
   {
+    canonical: '유아특수교육과 유치원 교사 인사',
+    aliases: [
+      '유아특수교육과 유치원 교사 인사',
+      '유치원 교원 인사', '유치원교원 인사',
+      '유치원 교사 인사', '유치원교사 인사',
+      '유치원 선생님 인사', '유치원선생님 인사'
+    ]
+  },
+  {
+    canonical: '특수교원 인사',
+    aliases: ['특수교원 인사', '특수교사 인사', '특수선생님 인사']
+  },
+  {
     canonical: '현장체험학습',
     aliases: ['현장체험학습', '체험학습', '현장학습', '학교현장체험학습']
   },
@@ -1066,6 +1079,22 @@ function normalizeHqContactSearchQuery(rawQuery) {
   // 띄어쓰기 여부와 관계없이 동일하게 처리합니다.
   if (/^(?:지방)?공무원인사$/.test(compact)) return '지방공무원 인사';
   if (/^교원인사$/.test(compact)) return '교원 인사';
+
+  // 유치원 교원 인사는 유아특수교육과의 유아장학·인사 업무를 우선 찾습니다.
+  if (/^(유치원교원인사|유치원교사인사|유치원선생님인사)$/.test(compact)) {
+    return '유아특수교육과 유치원 교사 인사';
+  }
+
+  // 특수교원 인사는 학교급에 따라 담당부서가 달라지므로 학교급이 특정되면 해당 과를 함께 검색합니다.
+  if (/^(유치원특수교원인사|유치원특수교사인사|특수유치원교사인사)$/.test(compact)) {
+    return '유아특수교육과 유치원 특수교사 인사';
+  }
+  if (/^(초등특수교원인사|초등특수교사인사)$/.test(compact)) {
+    return '초등교육과 초등특수 교원 인사';
+  }
+  if (/^(중등특수교원인사|중등특수교사인사)$/.test(compact)) {
+    return '중등교육과 중등특수 교원 인사';
+  }
 
   // 기간제/계약제 교원, 현장체험학습 등은 같은 업무를 서로 다른 명칭으로 부르는 경우가 많습니다.
   const aliasGroup = getHqContactAliasGroup(q);
@@ -1159,10 +1188,29 @@ function detectImplicitPersonnelContactIntent(rawQuery) {
 
   if (/^(?:지방)?공무원인사$/.test(q)) return { query: '지방공무원 인사' };
 
-  // 일반 교원 인사는 담당자를 임의로 하나 고르지 않고 초등/중등을 먼저 구분해 안내합니다.
+  // 일반 교원 인사는 담당자를 임의로 하나 고르지 않고 학교급을 먼저 구분해 안내합니다.
   if (/^(교원인사|교사인사|선생님인사)$/.test(q)) return { query: '교원 인사' };
+
+  // 유치원 교원 인사
+  if (/^(유치원교원인사|유치원교사인사|유치원선생님인사)$/.test(q)) {
+    return { query: '유아특수교육과 유치원 교사 인사' };
+  }
+
+  // 초·중등 교원 인사
   if (/^중등교원인사$/.test(q)) return { query: '중등교육과 교원 인사' };
   if (/^초등교원인사$/.test(q)) return { query: '초등교육과 교원 인사' };
+
+  // 특수교원 인사는 학교급이 없으면 먼저 유치원/초등/중등을 선택하도록 안내합니다.
+  if (/^(특수교원인사|특수교사인사|특수선생님인사)$/.test(q)) return { query: '특수교원 인사' };
+  if (/^(유치원특수교원인사|유치원특수교사인사|특수유치원교사인사)$/.test(q)) {
+    return { query: '유아특수교육과 유치원 특수교사 인사' };
+  }
+  if (/^(초등특수교원인사|초등특수교사인사)$/.test(q)) {
+    return { query: '초등교육과 초등특수 교원 인사' };
+  }
+  if (/^(중등특수교원인사|중등특수교사인사)$/.test(q)) {
+    return { query: '중등교육과 중등특수 교원 인사' };
+  }
 
   // 직위를 특정한 경우에는 그 직위의 인사업무 담당자를 공식 업무분장에서 찾습니다.
   if (/^교감인사$/.test(q)) return { query: '교감 인사' };
@@ -1738,8 +1786,10 @@ function kakaoTeacherPersonnelGuideResponse() {
   const text = [
     '교원 인사는 학교급과 직위에 따라 담당자가 달라요.',
     '',
-    '• 중등교원 인사 → 중등교육과',
+    '• 유치원 교원 인사 → 유아특수교육과',
     '• 초등교원 인사 → 초등교육과',
+    '• 중등교원 인사 → 중등교육과',
+    '• 특수교원 인사 → 학교급에 따라 담당부서가 달라요.',
     '',
     '교사(선생님), 교감, 교장, 장학관·교육연구관, 교육전문직(장학사·교육연구사) 등 직위에 따라 담당자가 다를 수 있습니다.',
     '아래에서 학교급을 선택하거나 「업무담당자 검색」에서 업무명을 구체적으로 검색해 주세요.'
@@ -1750,8 +1800,43 @@ function kakaoTeacherPersonnelGuideResponse() {
     template: {
       outputs: [{ simpleText: { text } }],
       quickReplies: [
-        { label: '중등교원 인사', action: 'message', messageText: '중등교육과 교원 인사 담당자' },
+        { label: '유치원 교원 인사', action: 'message', messageText: '유치원 교사 인사 담당자' },
         { label: '초등교원 인사', action: 'message', messageText: '초등교육과 교원 인사 담당자' },
+        { label: '중등교원 인사', action: 'message', messageText: '중등교육과 교원 인사 담당자' },
+        { label: '특수교원 인사', action: 'message', messageText: '특수교사 인사' },
+        { label: '🔎 업무담당자 검색', action: 'message', messageText: '업무담당자' }
+      ]
+    }
+  };
+}
+
+function isGeneralSpecialTeacherPersonnelQuery(query) {
+  const q = compactText(String(query || ''))
+    .replace(/경상남도교육청|경남교육청|교육청|본청/g, '')
+    .replace(/담당자|담당부서|담당과|담당|업무|검색|조회|안내|문의|전화번호|전화|연락처/g, '')
+    .replace(/[^가-힣a-z0-9]/gi, '');
+  return /^(특수교원인사|특수교사인사|특수선생님인사)$/.test(q);
+}
+
+function kakaoSpecialTeacherPersonnelGuideResponse() {
+  const text = [
+    '특수교원 인사는 학교급에 따라 담당부서가 달라요.',
+    '',
+    '• 유치원 특수교사 인사 → 유아특수교육과',
+    '• 초등특수교원 인사 → 초등교육과',
+    '• 중등특수교원 인사 → 중등교육과',
+    '',
+    '아래에서 학교급을 선택하면 해당 업무담당자와 전화번호를 찾아드려요.'
+  ].join('\n');
+
+  return {
+    version: '2.0',
+    template: {
+      outputs: [{ simpleText: { text } }],
+      quickReplies: [
+        { label: '유치원 특수교사', action: 'message', messageText: '유치원 특수교사 인사 담당자' },
+        { label: '초등특수교원', action: 'message', messageText: '초등특수교원 인사 담당자' },
+        { label: '중등특수교원', action: 'message', messageText: '중등특수교원 인사 담당자' },
         { label: '🔎 업무담당자 검색', action: 'message', messageText: '업무담당자' }
       ]
     }
@@ -1785,9 +1870,14 @@ async function kakaoHqContactResponse(intent) {
   const query = String((intent && intent.query) || '').trim();
   if (!query) return kakaoHqContactAskResponse();
 
-  // 학교급/직위가 특정되지 않은 교원 인사는 초등/중등 담당부서를 먼저 안내합니다.
+  // 학교급/직위가 특정되지 않은 교원 인사는 유치원/초등/중등/특수 담당부서를 먼저 안내합니다.
   if (isGeneralTeacherPersonnelQuery(query)) {
     return kakaoTeacherPersonnelGuideResponse();
+  }
+
+  // 특수교원 인사는 학교급에 따라 담당부서가 달라 먼저 학교급을 선택하도록 안내합니다.
+  if (isGeneralSpecialTeacherPersonnelQuery(query)) {
+    return kakaoSpecialTeacherPersonnelGuideResponse();
   }
 
   try {
