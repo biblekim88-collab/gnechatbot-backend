@@ -4573,7 +4573,7 @@ async function loadQuestions(page){
 
   document.querySelectorAll('.delQuestion').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
-      if (!confirm('이 질문 기록 1건을 삭제할까요?\n삭제하면 통계와 Supabase 저장 데이터에서도 빠집니다.')) return;
+      if (!confirm('이 질문 기록 1건을 삭제할까요?\\n삭제하면 통계와 Supabase 저장 데이터에서도 빠집니다.')) return;
       btn.disabled = true;
       try {
         await api('/api/admin/questions/' + btn.dataset.i, { method:'DELETE' });
