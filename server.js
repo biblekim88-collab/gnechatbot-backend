@@ -207,7 +207,12 @@ const SYNONYMS = {
   '팩스':'팩스민원', '신문고':'국민신문고', '정보공개':'정보공개청구',
   '아이북':'아이톡톡아이북', '아이북수리':'아이톡톡아이북', '자격증재교부':'교원자격증 재교부',
   '검고':'검정고시', '검정고사':'검정고시', '검정고ㅅㅣ':'검정고시', '검정고씨':'검정고시',
-  '학폭':'학교폭력', '스승찾기':'선생님찾기', '은사찾기':'선생님찾기'
+  '학폭':'학교폭력', '스승찾기':'선생님찾기', '은사찾기':'선생님찾기',
+  // 교원·학교 현장에서 자주 쓰는 명칭 차이도 같은 의미로 연결합니다.
+  '기간제교원':'계약제교원', '기간제교사':'계약제교원', '계약제교사':'계약제교원', '기간제선생님':'계약제교원',
+  '체험학습':'현장체험학습', '현장학습':'현장체험학습', '학교현장체험학습':'현장체험학습',
+  '공무직':'교육공무직원', '늘봄':'늘봄학교',
+  '교권보호':'교육활동보호', '교권침해':'교육활동침해'
 };
 
 // 대표 자연어 질문. 기존 시나리오 내용을 벗어난 답을 만들지는 않고, 질문을 올바른 블록으로 연결하는 용도입니다.
@@ -969,6 +974,83 @@ function parseGneHqWorkSearchResults(html) {
   return [...unique.values()];
 }
 
+
+// 본청 업무담당자 검색용 동의어 그룹입니다.
+// 시나리오 제목을 강제로 바꾸는 것이 아니라, 공식 업무분장에 실제로 쓰이는 여러 표현을 함께 조회합니다.
+const HQ_CONTACT_ALIAS_GROUPS = Object.freeze([
+  {
+    canonical: '계약제교원',
+    aliases: ['계약제교원', '기간제교원', '기간제교사', '계약제교사', '기간제선생님']
+  },
+  {
+    canonical: '현장체험학습',
+    aliases: ['현장체험학습', '체험학습', '현장학습', '학교현장체험학습']
+  },
+  {
+    canonical: '교원 인사',
+    aliases: [
+      '교원 인사', '교사 인사', '선생님 인사', '교감 인사', '교장 인사',
+      '장학관 인사', '교육연구관 인사', '교육전문직원 인사', '전문직 인사',
+      '장학사 인사', '교육연구사 인사'
+    ]
+  },
+  { canonical: '학교폭력', aliases: ['학교폭력', '학폭'] },
+  { canonical: '교육활동보호', aliases: ['교육활동보호', '교권보호'] },
+  { canonical: '교육활동침해', aliases: ['교육활동침해', '교권침해'] },
+  { canonical: '교육공무직원', aliases: ['교육공무직원', '교육공무직', '공무직'] },
+  { canonical: '늘봄학교', aliases: ['늘봄학교', '늘봄'] },
+  { canonical: '검정고시', aliases: ['검정고시', '검고'] },
+  { canonical: '정보공개청구', aliases: ['정보공개청구', '정보공개'] },
+  { canonical: '국민신문고', aliases: ['국민신문고', '신문고'] }
+]);
+
+function getHqContactAliasGroup(query) {
+  const compact = compactText(String(query || ''));
+  if (!compact) return null;
+  return HQ_CONTACT_ALIAS_GROUPS.find(group =>
+    group.aliases.some(alias => compactText(alias) === compact)
+  ) || null;
+}
+
+function hqContactSearchVariants(query) {
+  const raw = String(query || '').trim().replace(/\s+/g, ' ');
+  if (!raw) return [];
+  const group = getHqContactAliasGroup(raw);
+  if (!group) return [raw];
+  const values = [group.canonical, ...group.aliases];
+  const seen = new Set();
+  return values.filter(value => {
+    const key = compactText(value);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function mergeHqContactRows(rowGroups, maxResults = 0) {
+  const out = [];
+  const seen = new Set();
+  for (const rows of rowGroups) {
+    for (const row of (rows || [])) {
+      const key = `${row.department || ''}|${row.team || ''}|${row.phone || ''}|${row.duty || ''}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(row);
+      if (maxResults && out.length >= maxResults) return out;
+    }
+  }
+  return out;
+}
+
+function rankHqContactRowsWithAliases(query, rows, maxResults = 10) {
+  const variants = hqContactSearchVariants(query);
+  if (variants.length <= 1) return rankHqContactRows(query, rows, maxResults);
+  // 각 동의어를 공식 업무분장에 별도로 대조한 뒤 중복 담당자를 하나로 합칩니다.
+  // 웹 검색은 maxResults=0이라 전체 관련 담당자를 확인할 수 있습니다.
+  const groups = variants.map(variant => rankHqContactRows(variant, rows, 0));
+  return mergeHqContactRows(groups, maxResults);
+}
+
 function normalizeHqContactSearchQuery(rawQuery) {
   let q = String(rawQuery || '').trim().replace(/\s+/g, ' ');
   if (!q) return '';
@@ -984,6 +1066,10 @@ function normalizeHqContactSearchQuery(rawQuery) {
   // 띄어쓰기 여부와 관계없이 동일하게 처리합니다.
   if (/^(?:지방)?공무원인사$/.test(compact)) return '지방공무원 인사';
   if (/^교원인사$/.test(compact)) return '교원 인사';
+
+  // 기간제/계약제 교원, 현장체험학습 등은 같은 업무를 서로 다른 명칭으로 부르는 경우가 많습니다.
+  const aliasGroup = getHqContactAliasGroup(q);
+  if (aliasGroup) return aliasGroup.canonical;
 
   return q;
 }
@@ -1073,6 +1159,11 @@ function detectImplicitPersonnelContactIntent(rawQuery) {
 
   if (/^(?:지방)?공무원인사$/.test(q)) return { query: '지방공무원 인사' };
   if (/^교원인사$/.test(q)) return { query: '교원 인사' };
+
+  // 기간제교원은 '담당자'라고 쓰지 않아도 담당자 문의 의도가 매우 명확하므로 바로 업무검색으로 연결합니다.
+  if (/^(?:기간제교원|기간제교사|계약제교원|계약제교사|기간제선생님)(?:인사)?$/.test(q)) {
+    return { query: '계약제교원' };
+  }
 
   return null;
 }
@@ -1462,13 +1553,13 @@ async function searchGneHqContacts(query) {
   if (cached) return cached;
 
   const allRows = await getAllGneHqContacts();
-  let filtered = rankHqContactRows(core, allRows);
+  let filtered = rankHqContactRowsWithAliases(core, allRows);
 
   // 전체 표현이 업무분장과 맞지 않을 때만 일반적인 행동어를 덜어낸 핵심어로 재검색합니다.
   // 특정 업무를 하드코딩하지 않아 '제증명 발급', '검정고시 접수', '직업교육 지원' 등도 같이 보완됩니다.
   if (!filtered.length) {
     for (const fallback of hqContactFallbackQueries(core)) {
-      const retry = rankHqContactRows(fallback, allRows);
+      const retry = rankHqContactRowsWithAliases(fallback, allRows);
       if (retry.length) {
         filtered = retry;
         break;
@@ -1496,10 +1587,10 @@ async function searchGneHqContactsForWeb(query) {
     );
   if (exactDeptRows.length) return exactDeptRows;
 
-  let filtered = rankHqContactRows(core, allRows, 0);
+  let filtered = rankHqContactRowsWithAliases(core, allRows, 0);
   if (!filtered.length) {
     for (const fallback of hqContactFallbackQueries(core)) {
-      const retry = rankHqContactRows(fallback, allRows, 0);
+      const retry = rankHqContactRowsWithAliases(fallback, allRows, 0);
       if (retry.length) {
         filtered = retry;
         break;
@@ -3465,6 +3556,23 @@ app.post('/api/kakao-skill', async (req, res) => {
     resetKakaoTransferFailStreak(kakaoUserId);
     trackQuery(utterance, `본청 업무담당자:${hqContactIntent.query || '업무확인'}`, true, 'kakao-live-hq-contact', 'kakao:' + kakaoUserId, kakaoInteraction);
     return res.json(withStaffSearchQuickReply(await kakaoHqContactResponse(hqContactIntent)));
+  }
+
+  // '공사'처럼 계약업무(재정과)와 시설공사업무(시설과)로 나뉘는 표현은
+  // 일반 시나리오/공식누리집 검색보다 먼저 분야 선택을 안내합니다.
+  // 사용자가 직접 입력했거나 카카오 버튼으로 들어와도 동일하게 처리합니다.
+  if (isAmbiguousConstructionQuery(utterance)) {
+    resetKakaoFailStreak(kakaoUserId);
+    resetKakaoTransferFailStreak(kakaoUserId);
+    trackQuery(
+      utterance,
+      '공사 업무 구분: 재정과 계약 / 시설과 공사',
+      true,
+      'kakao-clarify-construction',
+      'kakao:' + kakaoUserId,
+      kakaoInteraction
+    );
+    return res.json(withStaffSearchQuickReply(await kakaoHqContactResponse({ query: '공사' })));
   }
 
   // 학교급을 말하지 않은 일반 전학 문의는 억지로 한 블록을 고르지 않고
