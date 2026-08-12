@@ -1158,7 +1158,20 @@ function detectImplicitPersonnelContactIntent(rawQuery) {
     .replace(/[^가-힣a-z0-9]/gi, '');
 
   if (/^(?:지방)?공무원인사$/.test(q)) return { query: '지방공무원 인사' };
-  if (/^교원인사$/.test(q)) return { query: '교원 인사' };
+
+  // 일반 교원 인사는 담당자를 임의로 하나 고르지 않고 초등/중등을 먼저 구분해 안내합니다.
+  if (/^(교원인사|교사인사|선생님인사)$/.test(q)) return { query: '교원 인사' };
+  if (/^중등교원인사$/.test(q)) return { query: '중등교육과 교원 인사' };
+  if (/^초등교원인사$/.test(q)) return { query: '초등교육과 교원 인사' };
+
+  // 직위를 특정한 경우에는 그 직위의 인사업무 담당자를 공식 업무분장에서 찾습니다.
+  if (/^교감인사$/.test(q)) return { query: '교감 인사' };
+  if (/^교장인사$/.test(q)) return { query: '교장 인사' };
+  if (/^장학관인사$/.test(q)) return { query: '장학관 인사' };
+  if (/^교육연구관인사$/.test(q)) return { query: '교육연구관 인사' };
+  if (/^(전문직인사|교육전문직인사|교육전문직원인사)$/.test(q)) return { query: '교육전문직원 인사' };
+  if (/^장학사인사$/.test(q)) return { query: '장학사 인사' };
+  if (/^교육연구사인사$/.test(q)) return { query: '교육연구사 인사' };
 
   // 기간제교원은 '담당자'라고 쓰지 않아도 담당자 문의 의도가 매우 명확하므로 바로 업무검색으로 연결합니다.
   if (/^(?:기간제교원|기간제교사|계약제교원|계약제교사|기간제선생님)(?:인사)?$/.test(q)) {
@@ -1712,6 +1725,39 @@ function kakaoHqContactAskResponse() {
   };
 }
 
+
+function isGeneralTeacherPersonnelQuery(query) {
+  const q = compactText(String(query || ''))
+    .replace(/경상남도교육청|경남교육청|교육청|본청/g, '')
+    .replace(/담당자|담당부서|담당과|담당|업무|검색|조회|안내|문의|전화번호|전화|연락처/g, '')
+    .replace(/[^가-힣a-z0-9]/gi, '');
+  return /^(교원인사|교사인사|선생님인사)$/.test(q);
+}
+
+function kakaoTeacherPersonnelGuideResponse() {
+  const text = [
+    '교원 인사는 학교급과 직위에 따라 담당자가 달라요.',
+    '',
+    '• 중등교원 인사 → 중등교육과',
+    '• 초등교원 인사 → 초등교육과',
+    '',
+    '교사(선생님), 교감, 교장, 장학관·교육연구관, 교육전문직(장학사·교육연구사) 등 직위에 따라 담당자가 다를 수 있습니다.',
+    '아래에서 학교급을 선택하거나 「업무담당자 검색」에서 업무명을 구체적으로 검색해 주세요.'
+  ].join('\n');
+
+  return {
+    version: '2.0',
+    template: {
+      outputs: [{ simpleText: { text } }],
+      quickReplies: [
+        { label: '중등교원 인사', action: 'message', messageText: '중등교육과 교원 인사 담당자' },
+        { label: '초등교원 인사', action: 'message', messageText: '초등교육과 교원 인사 담당자' },
+        { label: '🔎 업무담당자 검색', action: 'message', messageText: '업무담당자' }
+      ]
+    }
+  };
+}
+
 function kakaoHqContactResponseText(query, contacts) {
   const limited = (contacts || []).slice(0, 3);
   if (!limited.length) {
@@ -1738,6 +1784,11 @@ function kakaoHqContactResponseText(query, contacts) {
 async function kakaoHqContactResponse(intent) {
   const query = String((intent && intent.query) || '').trim();
   if (!query) return kakaoHqContactAskResponse();
+
+  // 학교급/직위가 특정되지 않은 교원 인사는 초등/중등 담당부서를 먼저 안내합니다.
+  if (isGeneralTeacherPersonnelQuery(query)) {
+    return kakaoTeacherPersonnelGuideResponse();
+  }
 
   try {
     if (isAmbiguousConstructionQuery(query)) {
@@ -2553,8 +2604,8 @@ function normalizeMissedKey(query) {
   return compactText(query || '');
 }
 
-function getMissedSummary() {
-  const list = readJson(MISSED_PATH, []);
+function getMissedSummary(listOverride = null) {
+  const list = Array.isArray(listOverride) ? listOverride : readJson(MISSED_PATH, []);
   const learned = readJson(LEARNED_PATH, []);
   const learnedKeys = new Set(learned.map(e => compactText(e.text || '')));
 
@@ -3700,7 +3751,8 @@ app.delete('/api/admin/missed/:i', requireAdmin, (req, res) => {
 // 놓친 질문을 같은 뜻끼리 묶어 빈도순으로 반환 (가장 자주 놓친 질문부터 학습하도록)
 app.get('/api/admin/missed-summary', requireAdmin, (req, res) => {
   const limit = Math.min(Number(req.query.limit) || 200, 2000);
-  const summary = getMissedSummary();
+  const filteredMissed = filterByKstPeriod(readJson(MISSED_PATH, []), req.query);
+  const summary = getMissedSummary(filteredMissed);
   res.json({
     total: summary.length,
     totalOccurrences: summary.reduce((s, g) => s + g.count, 0),
@@ -3718,7 +3770,7 @@ app.delete('/api/admin/missed-summary/:key', requireAdmin, (req, res) => {
 });
 
 app.get('/api/admin/missed.csv', requireAdmin, (req, res) => {
-  const summary = getMissedSummary();
+  const summary = getMissedSummary(filterByKstPeriod(readJson(MISSED_PATH, []), req.query));
   const csv = toCsv(summary, [
     { key: 'sample', label: '질문' },
     { key: 'count', label: '횟수' },
@@ -3750,6 +3802,43 @@ function toKstDateTimeParts(isoTime) {
   const date = kst.slice(0, 10);
   const time = kst.slice(11, 19);
   return { date, time, dateTime: `${date} ${time}` };
+}
+
+function normalizeAdminDate(value) {
+  const s = String(value || '').trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : '';
+}
+
+function getAdminPeriod(query = {}) {
+  let from = normalizeAdminDate(query.from || '');
+  let to = normalizeAdminDate(query.to || '');
+  const legacyDate = normalizeAdminDate(query.date || '');
+  if (legacyDate) {
+    from = legacyDate;
+    to = legacyDate;
+  }
+  if (from && to && from > to) [from, to] = [to, from];
+  return { from, to };
+}
+
+function filterByKstPeriod(list, query = {}) {
+  const { from, to } = getAdminPeriod(query);
+  if (!from && !to) return Array.isArray(list) ? [...list] : [];
+  return (Array.isArray(list) ? list : []).filter(e => {
+    const d = toKstDateKey(e && e.time);
+    if (!d) return false;
+    if (from && d < from) return false;
+    if (to && d > to) return false;
+    return true;
+  });
+}
+
+function periodLabel(query = {}) {
+  const { from, to } = getAdminPeriod(query);
+  if (from && to) return from === to ? from : `${from} ~ ${to}`;
+  if (from) return `${from} ~`;
+  if (to) return `~ ${to}`;
+  return '전체 기간';
 }
 
 function buildDailyStats(list, limit) {
@@ -3796,7 +3885,8 @@ function buildDailyStats(list, limit) {
 
 // 사용 통계: 인기 질문, 일별 추이, 매칭 성공률, 순방문자
 app.get('/api/admin/stats', requireAdmin, (req, res) => {
-  const list = readJson(QUERIES_PATH, []);
+  const allList = readJson(QUERIES_PATH, []);
+  const list = filterByKstPeriod(allList, req.query);
   const total = list.length;
   const matchedCount = list.filter(e => e.matched).length;
 
@@ -3804,9 +3894,9 @@ app.get('/api/admin/stats', requireAdmin, (req, res) => {
   list.forEach(e => { if (e.matched && e.matchedTitle) byTitle[e.matchedTitle] = (byTitle[e.matchedTitle]||0)+1; });
   const topBlocks = Object.entries(byTitle).sort((a,b)=>b[1]-a[1]).slice(0,15).map(([title,count])=>({title,count}));
 
-  // 관리자 화면에서는 최근 31개 '이용일'을 보여줍니다.
-  // (질문이 한 건도 없었던 날은 행을 만들지 않음)
-  const days = buildDailyStats(list, 31);
+  // 선택한 조회기간의 일별 통계를 모두 보여줍니다.
+  // 질문이 한 건도 없었던 날은 행을 만들지 않습니다.
+  const days = buildDailyStats(list, 0);
 
   const bySource = {};
   list.forEach(e => { const s = e.source||'unknown'; bySource[s] = (bySource[s]||0)+1; });
@@ -3854,7 +3944,8 @@ app.get('/api/admin/stats', requireAdmin, (req, res) => {
     matchRate: total ? Number((matchedCount/total*100).toFixed(1)) : 0,
     uniqueVisitors: allVisitorIds.size, avgQueriesPerVisitor,
     topBlocks, days, bySource, byInputType, topButtons, blockFlows,
-    storage: SUPABASE_ENABLED ? 'supabase' : 'local'
+    storage: SUPABASE_ENABLED ? 'supabase' : 'local',
+    period: { ...getAdminPeriod(req.query), label: periodLabel(req.query) }
   });
 });
 app.delete('/api/admin/stats', requireAdmin, (req, res) => {
@@ -3863,10 +3954,101 @@ app.delete('/api/admin/stats', requireAdmin, (req, res) => {
 });
 
 
+
+// 전체 질문에서 한 건 삭제
+app.delete('/api/admin/questions/:i', requireAdmin, (req, res) => {
+  const list = readJson(QUERIES_PATH, []);
+  const i = Number(req.params.i);
+  if (!Number.isInteger(i) || i < 0 || i >= list.length) {
+    return res.status(404).json({ error: '삭제할 질문을 찾지 못했습니다.' });
+  }
+  const [removed] = list.splice(i, 1);
+  writeJson(QUERIES_PATH, list);
+  res.json({ status: 'ok', removed: 1, item: removed || null });
+});
+
+// 지정 기간의 전체 질문 삭제. 기간을 반드시 지정해야 전체 실수 삭제를 방지합니다.
+app.delete('/api/admin/questions', requireAdmin, (req, res) => {
+  const { from, to } = getAdminPeriod(req.query);
+  if (!from && !to) return res.status(400).json({ error: '삭제할 시작일 또는 종료일을 지정해 주세요.' });
+  const list = readJson(QUERIES_PATH, []);
+  const kept = list.filter(e => {
+    const d = toKstDateKey(e && e.time);
+    if (!d) return true;
+    if (from && d < from) return true;
+    if (to && d > to) return true;
+    return false;
+  });
+  const removed = list.length - kept.length;
+  writeJson(QUERIES_PATH, kept);
+  res.json({ status: 'ok', removed, period: { from, to } });
+});
+
+// 지정 기간의 질문 통계 + 놓친 질문 기록을 함께 삭제 (테스트 기록 정리용)
+app.delete('/api/admin/records', requireAdmin, (req, res) => {
+  const { from, to } = getAdminPeriod(req.query);
+  if (!from && !to) return res.status(400).json({ error: '삭제할 시작일 또는 종료일을 지정해 주세요.' });
+
+  const queries = readJson(QUERIES_PATH, []);
+  const keptQueries = queries.filter(e => {
+    const d = toKstDateKey(e && e.time);
+    if (!d) return true;
+    if (from && d < from) return true;
+    if (to && d > to) return true;
+    return false;
+  });
+
+  const missed = readJson(MISSED_PATH, []);
+  const keptMissed = missed.filter(e => {
+    const d = toKstDateKey(e && e.time);
+    if (!d) return true;
+    if (from && d < from) return true;
+    if (to && d > to) return true;
+    return false;
+  });
+
+  writeJson(QUERIES_PATH, keptQueries);
+  writeJson(MISSED_PATH, keptMissed);
+  res.json({
+    status: 'ok',
+    removedQueries: queries.length - keptQueries.length,
+    removedMissed: missed.length - keptMissed.length,
+    period: { from, to }
+  });
+});
+
+// 놓친 질문 원본 한 건 삭제
+app.delete('/api/admin/missed-detail/:i', requireAdmin, (req, res) => {
+  const list = readJson(MISSED_PATH, []);
+  const i = Number(req.params.i);
+  if (!Number.isInteger(i) || i < 0 || i >= list.length) {
+    return res.status(404).json({ error: '삭제할 놓친 질문을 찾지 못했습니다.' });
+  }
+  list.splice(i, 1);
+  writeJson(MISSED_PATH, list);
+  res.json({ status: 'ok', removed: 1 });
+});
+
+// 지정 기간의 놓친 질문 원본 삭제
+app.delete('/api/admin/missed-detail', requireAdmin, (req, res) => {
+  const { from, to } = getAdminPeriod(req.query);
+  if (!from && !to) return res.status(400).json({ error: '삭제할 시작일 또는 종료일을 지정해 주세요.' });
+  const list = readJson(MISSED_PATH, []);
+  const kept = list.filter(e => {
+    const d = toKstDateKey(e && e.time);
+    if (!d) return true;
+    if (from && d < from) return true;
+    if (to && d > to) return true;
+    return false;
+  });
+  const removed = list.length - kept.length;
+  writeJson(MISSED_PATH, kept);
+  res.json({ status: 'ok', removed, period: { from, to } });
+});
+
 // 전체 질문 상세 내역: 날짜(KST)·검색어 필터 + 페이지 이동
 app.get('/api/admin/questions', requireAdmin, (req, res) => {
   const list = readJson(QUERIES_PATH, []);
-  const date = String(req.query.date || '').trim();
   const q = String(req.query.q || '').trim().toLowerCase();
   const pageSize = Math.min(Math.max(Number(req.query.pageSize) || 200, 20), 500);
   const page = Math.max(Number(req.query.page) || 1, 1);
@@ -3895,7 +4077,9 @@ app.get('/api/admin/questions', requireAdmin, (req, res) => {
     };
   });
 
-  if (date) rows = rows.filter(r => r.date === date);
+  const period = getAdminPeriod(req.query);
+  if (period.from) rows = rows.filter(r => r.date >= period.from);
+  if (period.to) rows = rows.filter(r => r.date <= period.to);
   if (q) rows = rows.filter(r => (`${r.query} ${r.matchedTitle} ${r.referrerBlock} ${r.currentBlock} ${r.lastBlock}`).toLowerCase().includes(q));
   rows.sort((a, b) => b.idx - a.idx);
 
@@ -3903,12 +4087,11 @@ app.get('/api/admin/questions', requireAdmin, (req, res) => {
   const pages = Math.max(Math.ceil(total / pageSize), 1);
   const safePage = Math.min(page, pages);
   const start = (safePage - 1) * pageSize;
-  res.json({ total, page: safePage, pageSize, pages, items: rows.slice(start, start + pageSize) });
+  res.json({ total, page: safePage, pageSize, pages, period, items: rows.slice(start, start + pageSize) });
 });
 
 app.get('/api/admin/questions.csv', requireAdmin, (req, res) => {
   const list = readJson(QUERIES_PATH, []);
-  const date = String(req.query.date || '').trim();
   let rows = list.map((e, idx) => {
     const dt = toKstDateTimeParts(e.time);
     return {
@@ -3930,7 +4113,9 @@ app.get('/api/admin/questions.csv', requireAdmin, (req, res) => {
       lastBlockId: e.lastBlockId || ''
     };
   });
-  if (date) rows = rows.filter(r => r.date === date);
+  const period = getAdminPeriod(req.query);
+  if (period.from) rows = rows.filter(r => r.date >= period.from);
+  if (period.to) rows = rows.filter(r => r.date <= period.to);
   rows.sort((a, b) => b.idx - a.idx);
   const csv = toCsv(rows, [
     { key: 'date', label: '일자(KST)' },
@@ -3954,7 +4139,6 @@ app.get('/api/admin/questions.csv', requireAdmin, (req, res) => {
 // 놓친 질문 원본 내역: 빈도 요약과 별도로 날짜별로 하나씩 확인
 app.get('/api/admin/missed-detail', requireAdmin, (req, res) => {
   const list = readJson(MISSED_PATH, []);
-  const date = String(req.query.date || '').trim();
   const q = String(req.query.q || '').trim().toLowerCase();
   const pageSize = Math.min(Math.max(Number(req.query.pageSize) || 200, 20), 500);
   const page = Math.max(Number(req.query.page) || 1, 1);
@@ -3971,7 +4155,9 @@ app.get('/api/admin/missed-detail', requireAdmin, (req, res) => {
       bestGuessScore: e.bestGuessScore === '' || e.bestGuessScore == null ? '' : e.bestGuessScore
     };
   });
-  if (date) rows = rows.filter(r => r.date === date);
+  const period = getAdminPeriod(req.query);
+  if (period.from) rows = rows.filter(r => r.date >= period.from);
+  if (period.to) rows = rows.filter(r => r.date <= period.to);
   if (q) rows = rows.filter(r => (`${r.query} ${r.bestGuessTitle}`).toLowerCase().includes(q));
   rows.sort((a, b) => b.idx - a.idx);
 
@@ -3979,12 +4165,11 @@ app.get('/api/admin/missed-detail', requireAdmin, (req, res) => {
   const pages = Math.max(Math.ceil(total / pageSize), 1);
   const safePage = Math.min(page, pages);
   const start = (safePage - 1) * pageSize;
-  res.json({ total, page: safePage, pageSize, pages, items: rows.slice(start, start + pageSize) });
+  res.json({ total, page: safePage, pageSize, pages, period, items: rows.slice(start, start + pageSize) });
 });
 
 app.get('/api/admin/missed-detail.csv', requireAdmin, (req, res) => {
   const list = readJson(MISSED_PATH, []);
-  const date = String(req.query.date || '').trim();
   let rows = list.map((e, idx) => {
     const dt = toKstDateTimeParts(e.time);
     return {
@@ -3996,7 +4181,9 @@ app.get('/api/admin/missed-detail.csv', requireAdmin, (req, res) => {
       bestGuessScore: e.bestGuessScore === '' || e.bestGuessScore == null ? '' : e.bestGuessScore
     };
   });
-  if (date) rows = rows.filter(r => r.date === date);
+  const period = getAdminPeriod(req.query);
+  if (period.from) rows = rows.filter(r => r.date >= period.from);
+  if (period.to) rows = rows.filter(r => r.date <= period.to);
   rows.sort((a, b) => b.idx - a.idx);
   const csv = toCsv(rows, [
     { key: 'date', label: '일자(KST)' },
@@ -4011,7 +4198,7 @@ app.get('/api/admin/missed-detail.csv', requireAdmin, (req, res) => {
 });
 
 app.get('/api/admin/stats/top.csv', requireAdmin, (req, res) => {
-  const list = readJson(QUERIES_PATH, []);
+  const list = filterByKstPeriod(readJson(QUERIES_PATH, []), req.query);
   const byTitle = {};
   list.forEach(e => { if (e.matched && e.matchedTitle) byTitle[e.matchedTitle] = (byTitle[e.matchedTitle]||0)+1; });
   const rows = Object.entries(byTitle).sort((a,b)=>b[1]-a[1]).map(([title,count])=>({title,count}));
@@ -4022,8 +4209,8 @@ app.get('/api/admin/stats/top.csv', requireAdmin, (req, res) => {
 });
 
 app.get('/api/admin/stats/daily.csv', requireAdmin, (req, res) => {
-  const list = readJson(QUERIES_PATH, []);
-  // CSV는 저장되어 있는 전체 일별 통계를 내려받습니다.
+  const list = filterByKstPeriod(readJson(QUERIES_PATH, []), req.query);
+  // 조회기간이 있으면 해당 기간만, 없으면 전체 일별 통계를 내려받습니다.
   const rows = buildDailyStats(list, 0);
   const csv = toCsv(rows, [
     { key: 'date', label: '일자(KST)' },
@@ -4120,14 +4307,29 @@ app.get('/admin', (req, res) => {
     <h1>경상남도교육청 민원 챗봇 관리자 대시보드 <button class="ghost" id="logoutBtn" style="height:32px;padding:0 10px;font-size:12px">로그아웃</button></h1>
 
     <div class="card">
-      <h2>전체 통계 <button class="ghost" id="refreshBtn" style="height:32px;padding:0 10px;font-size:12px">새로고침</button></h2>
-      <div class="summary4" id="summary4"></div>
+      <h2>기간별 통계 <button class="ghost" id="refreshBtn" style="height:32px;padding:0 10px;font-size:12px">새로고침</button></h2>
+      <div class="small muted">한국시간(KST) 기준입니다. 날짜를 직접 지정하거나 주간·월간·연간 버튼으로 빠르게 조회할 수 있어요.</div>
+      <div class="row gap" style="align-items:center">
+        <input id="statsFrom" type="date" style="height:38px;border:1px solid #cfd6dd;border-radius:9px;padding:0 9px">
+        <span class="small muted">~</span>
+        <input id="statsTo" type="date" style="height:38px;border:1px solid #cfd6dd;border-radius:9px;padding:0 9px">
+        <button id="statsFilterBtn" class="ghost" style="height:38px">기간 조회</button>
+        <button class="ghost periodPreset" data-preset="week" style="height:38px">주간</button>
+        <button class="ghost periodPreset" data-preset="month" style="height:38px">월간</button>
+        <button class="ghost periodPreset" data-preset="year" style="height:38px">연간</button>
+        <button class="ghost periodPreset" data-preset="all" style="height:38px">전체</button>
+      </div>
+      <div class="row gap" style="align-items:center">
+        <button id="deletePeriodRecordsBtn" class="danger" style="height:36px">조회기간 테스트 기록 삭제</button>
+        <span class="small muted">질문 통계와 놓친 질문 기록을 함께 삭제합니다. 기간을 지정해야 삭제할 수 있어요.</span>
+      </div>
+      <div class="summary4 gap" id="summary4"></div>
       <div class="gap small muted" id="statsMeta"></div>
     </div>
 
     <div class="card">
-      <h2>일별 통계 (최근 31개 이용일) <a class="dl" id="dailyCsv" href="#">CSV 다운로드</a></h2>
-      <div class="small muted">한국시간(KST) 기준이며, 질문이 있었던 날짜만 표시합니다. CSV에는 저장된 전체 일별 통계가 포함됩니다.</div>
+      <h2>조회기간 일별 통계 <a class="dl" id="dailyCsv" href="#">CSV 다운로드</a></h2>
+      <div class="small muted">선택한 기간 안에서 질문이 있었던 날짜만 표시합니다.</div>
       <div style="overflow-x:auto" class="gap">
         <table id="dailyTable">
           <thead><tr><th>일자</th><th>질문수</th><th>순방문자</th><th>직접입력</th><th>버튼클릭</th><th>매칭</th><th>미매칭</th><th>매칭률</th></tr></thead>
@@ -4161,17 +4363,20 @@ app.get('/admin', (req, res) => {
 
     <div class="card">
       <h2>전체 질문 내역 <a class="dl" id="questionsCsv" href="#">전체 CSV 다운로드</a></h2>
-      <div class="small muted">모든 질문을 한국시간(KST) 기준 일자·시간과 함께 확인할 수 있습니다. 날짜를 선택하면 해당 날짜 질문만 볼 수 있어요.</div>
+      <div class="small muted">시작일~종료일을 지정해 기간별로 조회할 수 있고, 테스트 질문은 건별 또는 조회기간 전체를 삭제할 수 있어요.</div>
       <div class="row gap">
-        <input id="questionDate" type="date" style="height:38px;border:1px solid #cfd6dd;border-radius:9px;padding:0 9px">
+        <input id="questionFrom" type="date" style="height:38px;border:1px solid #cfd6dd;border-radius:9px;padding:0 9px">
+        <span class="small muted" style="align-self:center">~</span>
+        <input id="questionTo" type="date" style="height:38px;border:1px solid #cfd6dd;border-radius:9px;padding:0 9px">
         <input id="questionSearch" type="text" placeholder="질문 또는 연결 항목 검색" style="flex:1;min-width:180px;height:38px">
         <button id="questionFilterBtn" class="ghost" style="height:38px">조회</button>
         <button id="questionResetBtn" class="ghost" style="height:38px">전체</button>
+        <button id="questionDeletePeriodBtn" class="danger" style="height:38px">조회기간 질문 삭제</button>
       </div>
       <div class="small muted gap" id="questionMeta"></div>
       <div style="overflow-x:auto" class="gap">
         <table id="questionsTable">
-          <thead><tr><th>일자</th><th>시간</th><th>입력유형</th><th>질문/버튼</th><th>결과</th><th>연결 항목</th><th>버튼 출발블록</th><th>현재 스킬블록</th><th>직전블록</th></tr></thead>
+          <thead><tr><th>일자</th><th>시간</th><th>입력유형</th><th>질문/버튼</th><th>결과</th><th>연결 항목</th><th>버튼 출발블록</th><th>현재 스킬블록</th><th>직전블록</th><th></th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
@@ -4189,17 +4394,20 @@ app.get('/admin', (req, res) => {
 
     <div class="card">
       <h2>놓친 질문 일별 내역 <a class="dl" id="missedDetailCsv" href="#">전체 CSV 다운로드</a></h2>
-      <div class="small muted">놓친 질문을 묶지 않고 실제 발생한 날짜·시간별로 하나씩 보여줍니다.</div>
+      <div class="small muted">놓친 질문을 실제 발생한 날짜·시간별로 확인하며 기간별 조회와 삭제가 가능합니다.</div>
       <div class="row gap">
-        <input id="missedDate" type="date" style="height:38px;border:1px solid #cfd6dd;border-radius:9px;padding:0 9px">
+        <input id="missedFrom" type="date" style="height:38px;border:1px solid #cfd6dd;border-radius:9px;padding:0 9px">
+        <span class="small muted" style="align-self:center">~</span>
+        <input id="missedTo" type="date" style="height:38px;border:1px solid #cfd6dd;border-radius:9px;padding:0 9px">
         <input id="missedSearch" type="text" placeholder="놓친 질문 검색" style="flex:1;min-width:180px;height:38px">
         <button id="missedFilterBtn" class="ghost" style="height:38px">조회</button>
         <button id="missedResetBtn" class="ghost" style="height:38px">전체</button>
+        <button id="missedDeletePeriodBtn" class="danger" style="height:38px">조회기간 놓친질문 삭제</button>
       </div>
       <div class="small muted gap" id="missedDetailMeta"></div>
       <div style="overflow-x:auto" class="gap">
         <table id="missedDetailTable">
-          <thead><tr><th>일자</th><th>시간</th><th>놓친 질문</th><th>추정 항목</th><th>점수</th></tr></thead>
+          <thead><tr><th>일자</th><th>시간</th><th>놓친 질문</th><th>추정 항목</th><th>점수</th><th></th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
@@ -4252,17 +4460,42 @@ async function login(){
   }
 }
 
+function kstTodayString(){
+  const d = new Date(Date.now() + 9*60*60*1000);
+  return d.toISOString().slice(0,10);
+}
+function dateAddDays(dateStr, days){
+  const d = new Date(dateStr + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0,10);
+}
+function firstOfMonth(dateStr){ return dateStr.slice(0,7) + '-01'; }
+function firstOfYear(dateStr){ return dateStr.slice(0,4) + '-01-01'; }
+function getStatsPeriodParams(){
+  const params = new URLSearchParams();
+  const from = document.getElementById('statsFrom').value || '';
+  const to = document.getElementById('statsTo').value || '';
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
+  return params;
+}
+function syncSectionPeriodsFromStats(){
+  const from = document.getElementById('statsFrom').value || '';
+  const to = document.getElementById('statsTo').value || '';
+  document.getElementById('questionFrom').value = from;
+  document.getElementById('questionTo').value = to;
+  document.getElementById('missedFrom').value = from;
+  document.getElementById('missedTo').value = to;
+}
+
 async function loadAll(){
-  document.getElementById('dailyCsv').href = '/api/admin/stats/daily.csv?token=' + encodeURIComponent(TOKEN);
-  document.getElementById('questionsCsv').href = '/api/admin/questions.csv?token=' + encodeURIComponent(TOKEN);
-  document.getElementById('missedCsv').href = '/api/admin/missed.csv?token=' + encodeURIComponent(TOKEN);
-  document.getElementById('missedDetailCsv').href = '/api/admin/missed-detail.csv?token=' + encodeURIComponent(TOKEN);
   BLOCKS = await api('/api/admin/blocks');
   await Promise.all([loadStats(), loadQuestions(), loadMissed(), loadMissedDetail(), loadLearned()]);
 }
 
 async function loadStats(){
-  const s = await api('/api/admin/stats');
+  const params = getStatsPeriodParams();
+  const s = await api('/api/admin/stats' + (params.toString() ? '?' + params.toString() : ''));
   document.getElementById('summary4').innerHTML = [
     ['전체 질문', s.total],
     ['매칭률', s.matchRate + '%'],
@@ -4272,7 +4505,13 @@ async function loadStats(){
   const directCount = (s.byInputType||{})['직접입력'] || 0;
   const buttonCount = (s.byInputType||{})['버튼클릭'] || 0;
   const unknownInputCount = (s.byInputType||{})['기록없음'] || 0;
-  document.getElementById('statsMeta').textContent = '매칭 ' + s.matchedCount + '건 / 미매칭 ' + s.unmatchedCount + '건 / 직접입력 ' + directCount + '건 / 버튼 ' + buttonCount + '건 / 저장: ' + (s.storage === 'supabase' ? 'Supabase 영구보존' : 'Render 로컬');
+  document.getElementById('statsMeta').textContent = '조회기간: ' + ((s.period||{}).label || '전체 기간') + ' / 매칭 ' + s.matchedCount + '건 / 미매칭 ' + s.unmatchedCount + '건 / 직접입력 ' + directCount + '건 / 버튼 ' + buttonCount + '건 / 저장: ' + (s.storage === 'supabase' ? 'Supabase 영구보존' : 'Render 로컬');
+  const dailyCsvParams = getStatsPeriodParams();
+  dailyCsvParams.set('token', TOKEN);
+  document.getElementById('dailyCsv').href = '/api/admin/stats/daily.csv?' + dailyCsvParams.toString();
+  const missedCsvParams = getStatsPeriodParams();
+  missedCsvParams.set('token', TOKEN);
+  document.getElementById('missedCsv').href = '/api/admin/missed.csv?' + missedCsvParams.toString();
   document.getElementById('inputSummary').innerHTML = [
     ['직접입력', directCount],
     ['버튼클릭', buttonCount],
@@ -4301,10 +4540,12 @@ async function loadStats(){
 
 async function loadQuestions(page){
   if (page != null) QUESTION_PAGE = Math.max(Number(page)||1, 1);
-  const date = document.getElementById('questionDate').value || '';
+  const from = document.getElementById('questionFrom').value || '';
+  const to = document.getElementById('questionTo').value || '';
   const q = document.getElementById('questionSearch').value.trim();
   const params = new URLSearchParams({ page:String(QUESTION_PAGE), pageSize:'200' });
-  if (date) params.set('date', date);
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
   if (q) params.set('q', q);
   const d = await api('/api/admin/questions?' + params.toString());
   QUESTION_PAGE = d.page || 1;
@@ -4320,21 +4561,36 @@ async function loadQuestions(page){
       '<td class="small muted">'+esc(e.referrerBlock||'-')+'</td>'+
       '<td class="small muted">'+esc(e.currentBlock||'-')+'</td>'+
       '<td class="small muted">'+esc(e.lastBlock||'-')+'</td>'+
+      '<td><button class="danger delQuestion" style="height:30px;padding:0 9px;font-size:11px" data-i="'+esc(e.idx)+'">삭제</button></td>'+
     '</tr>'
-  ).join('') || '<tr><td colspan="9" class="muted">해당 조건의 질문이 없어요.</td></tr>';
+  ).join('') || '<tr><td colspan="10" class="muted">해당 조건의 질문이 없어요.</td></tr>';
   document.getElementById('questionPrev').disabled = QUESTION_PAGE <= 1;
   document.getElementById('questionNext').disabled = QUESTION_PAGE >= (d.pages||1);
   const csvParams = new URLSearchParams({ token:TOKEN });
-  if (date) csvParams.set('date', date);
+  if (from) csvParams.set('from', from);
+  if (to) csvParams.set('to', to);
   document.getElementById('questionsCsv').href = '/api/admin/questions.csv?' + csvParams.toString();
+
+  document.querySelectorAll('.delQuestion').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      if (!confirm('이 질문 기록 1건을 삭제할까요?\n삭제하면 통계와 Supabase 저장 데이터에서도 빠집니다.')) return;
+      btn.disabled = true;
+      try {
+        await api('/api/admin/questions/' + btn.dataset.i, { method:'DELETE' });
+        await Promise.all([loadStats(), loadQuestions(QUESTION_PAGE)]);
+      } finally { btn.disabled = false; }
+    });
+  });
 }
 
 async function loadMissedDetail(page){
   if (page != null) MISSED_PAGE = Math.max(Number(page)||1, 1);
-  const date = document.getElementById('missedDate').value || '';
+  const from = document.getElementById('missedFrom').value || '';
+  const to = document.getElementById('missedTo').value || '';
   const q = document.getElementById('missedSearch').value.trim();
   const params = new URLSearchParams({ page:String(MISSED_PAGE), pageSize:'200' });
-  if (date) params.set('date', date);
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
   if (q) params.set('q', q);
   const d = await api('/api/admin/missed-detail?' + params.toString());
   MISSED_PAGE = d.page || 1;
@@ -4346,17 +4602,32 @@ async function loadMissedDetail(page){
       '<td>'+esc(e.query)+'</td>'+ 
       '<td class="small muted">'+esc(e.bestGuessTitle||'-')+'</td>'+ 
       '<td class="small muted">'+esc(e.bestGuessScore===''?'-':e.bestGuessScore)+'</td>'+ 
+      '<td><button class="danger delMissedDetail" style="height:30px;padding:0 9px;font-size:11px" data-i="'+esc(e.idx)+'">삭제</button></td>'+
     '</tr>'
-  ).join('') || '<tr><td colspan="5" class="muted">해당 조건의 놓친 질문이 없어요.</td></tr>';
+  ).join('') || '<tr><td colspan="6" class="muted">해당 조건의 놓친 질문이 없어요.</td></tr>';
   document.getElementById('missedPrev').disabled = MISSED_PAGE <= 1;
   document.getElementById('missedNext').disabled = MISSED_PAGE >= (d.pages||1);
   const csvParams = new URLSearchParams({ token:TOKEN });
-  if (date) csvParams.set('date', date);
+  if (from) csvParams.set('from', from);
+  if (to) csvParams.set('to', to);
   document.getElementById('missedDetailCsv').href = '/api/admin/missed-detail.csv?' + csvParams.toString();
+
+  document.querySelectorAll('.delMissedDetail').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      if (!confirm('이 놓친 질문 기록 1건을 삭제할까요?')) return;
+      btn.disabled = true;
+      try {
+        await api('/api/admin/missed-detail/' + btn.dataset.i, { method:'DELETE' });
+        await Promise.all([loadMissed(), loadMissedDetail(MISSED_PAGE)]);
+      } finally { btn.disabled = false; }
+    });
+  });
 }
 
 async function loadMissed(){
-  const d = await api('/api/admin/missed-summary?limit=100');
+  const params = getStatsPeriodParams();
+  params.set('limit', '100');
+  const d = await api('/api/admin/missed-summary?' + params.toString());
   const options = '<option value="">항목 선택…</option>' + BLOCKS.map(b=>'<option value="'+b.idx+'">'+esc(b.title)+'</option>').join('');
   document.querySelector('#missedTable tbody').innerHTML = (d.items||[]).map(g=>{
     const learnedBadge = g.alreadyLearned ? ' <span class="badge ok">학습됨</span>' : '';
@@ -4402,14 +4673,75 @@ async function loadLearned(){
   });
 }
 
+async function applyStatsPeriod(){
+  syncSectionPeriodsFromStats();
+  QUESTION_PAGE = 1;
+  MISSED_PAGE = 1;
+  await Promise.all([loadStats(), loadQuestions(), loadMissed(), loadMissedDetail()]);
+}
+document.getElementById('statsFilterBtn').addEventListener('click', applyStatsPeriod);
+document.querySelectorAll('.periodPreset').forEach(btn=>{
+  btn.addEventListener('click', async ()=>{
+    const today = kstTodayString();
+    const preset = btn.dataset.preset;
+    let from = '', to = '';
+    if (preset === 'week') { from = dateAddDays(today, -6); to = today; }
+    else if (preset === 'month') { from = firstOfMonth(today); to = today; }
+    else if (preset === 'year') { from = firstOfYear(today); to = today; }
+    document.getElementById('statsFrom').value = from;
+    document.getElementById('statsTo').value = to;
+    await applyStatsPeriod();
+  });
+});
+document.getElementById('deletePeriodRecordsBtn').addEventListener('click', async ()=>{
+  const from = document.getElementById('statsFrom').value || '';
+  const to = document.getElementById('statsTo').value || '';
+  if (!from && !to) { alert('삭제할 기간을 먼저 지정해 주세요. 전체 기록은 이 버튼으로 삭제되지 않습니다.'); return; }
+  const label = (from || '처음') + ' ~ ' + (to || '현재');
+  if (!confirm(label + ' 기간의 질문 통계와 놓친 질문 기록을 모두 삭제할까요?\\n테스트 기록 정리용이며 삭제 후 되돌릴 수 없습니다.')) return;
+  const params = new URLSearchParams();
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
+  const d = await api('/api/admin/records?' + params.toString(), { method:'DELETE' });
+  alert('질문 ' + (d.removedQueries||0) + '건, 놓친 질문 ' + (d.removedMissed||0) + '건을 삭제했습니다.');
+  QUESTION_PAGE = 1; MISSED_PAGE = 1;
+  await loadAll();
+});
+
 document.getElementById('questionFilterBtn').addEventListener('click', ()=>{ QUESTION_PAGE=1; loadQuestions(); });
-document.getElementById('questionResetBtn').addEventListener('click', ()=>{ document.getElementById('questionDate').value=''; document.getElementById('questionSearch').value=''; QUESTION_PAGE=1; loadQuestions(); });
+document.getElementById('questionResetBtn').addEventListener('click', ()=>{ document.getElementById('questionFrom').value=''; document.getElementById('questionTo').value=''; document.getElementById('questionSearch').value=''; QUESTION_PAGE=1; loadQuestions(); });
+document.getElementById('questionDeletePeriodBtn').addEventListener('click', async ()=>{
+  const from = document.getElementById('questionFrom').value || '';
+  const to = document.getElementById('questionTo').value || '';
+  if (!from && !to) { alert('삭제할 기간을 먼저 지정해 주세요.'); return; }
+  if (!confirm((from||'처음') + ' ~ ' + (to||'현재') + ' 기간의 질문 기록을 모두 삭제할까요?\\n놓친 질문 원본은 별도로 유지됩니다.')) return;
+  const params = new URLSearchParams();
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
+  const d = await api('/api/admin/questions?' + params.toString(), { method:'DELETE' });
+  alert((d.removed||0) + '건을 삭제했습니다.');
+  QUESTION_PAGE=1;
+  await Promise.all([loadStats(), loadQuestions()]);
+});
 document.getElementById('questionSearch').addEventListener('keydown', e=>{ if(e.key==='Enter'){ QUESTION_PAGE=1; loadQuestions(); } });
 document.getElementById('questionPrev').addEventListener('click', ()=>loadQuestions(QUESTION_PAGE-1));
 document.getElementById('questionNext').addEventListener('click', ()=>loadQuestions(QUESTION_PAGE+1));
 
 document.getElementById('missedFilterBtn').addEventListener('click', ()=>{ MISSED_PAGE=1; loadMissedDetail(); });
-document.getElementById('missedResetBtn').addEventListener('click', ()=>{ document.getElementById('missedDate').value=''; document.getElementById('missedSearch').value=''; MISSED_PAGE=1; loadMissedDetail(); });
+document.getElementById('missedResetBtn').addEventListener('click', ()=>{ document.getElementById('missedFrom').value=''; document.getElementById('missedTo').value=''; document.getElementById('missedSearch').value=''; MISSED_PAGE=1; loadMissedDetail(); });
+document.getElementById('missedDeletePeriodBtn').addEventListener('click', async ()=>{
+  const from = document.getElementById('missedFrom').value || '';
+  const to = document.getElementById('missedTo').value || '';
+  if (!from && !to) { alert('삭제할 기간을 먼저 지정해 주세요.'); return; }
+  if (!confirm((from||'처음') + ' ~ ' + (to||'현재') + ' 기간의 놓친 질문 기록을 모두 삭제할까요?')) return;
+  const params = new URLSearchParams();
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
+  const d = await api('/api/admin/missed-detail?' + params.toString(), { method:'DELETE' });
+  alert((d.removed||0) + '건을 삭제했습니다.');
+  MISSED_PAGE=1;
+  await Promise.all([loadMissed(), loadMissedDetail()]);
+});
 document.getElementById('missedSearch').addEventListener('keydown', e=>{ if(e.key==='Enter'){ MISSED_PAGE=1; loadMissedDetail(); } });
 document.getElementById('missedPrev').addEventListener('click', ()=>loadMissedDetail(MISSED_PAGE-1));
 document.getElementById('missedNext').addEventListener('click', ()=>loadMissedDetail(MISSED_PAGE+1));
