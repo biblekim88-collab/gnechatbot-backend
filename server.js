@@ -2449,7 +2449,10 @@ function esc(v){return String(v??'').replace(/[&<>\"]/g,m=>({'&':'&amp;','<':'&l
 function tel(v){const m=String(v||'').match(/0\d{1,2}-\d{3,4}-\d{4}/);return m?m[0]:'';}
 function setRegion(open){regionBox.style.display=open?'block':'none';regionToggle.textContent=open?'🏫 지역교육청 안내 닫기':'🏫 지역교육청 안내 보기';}
 regionToggle.addEventListener('click',()=>setRegion(regionBox.style.display!=='block'));
-if(new URLSearchParams(location.search).get('regional')==='1'){setRegion(true);setTimeout(()=>regionBox.scrollIntoView({behavior:'smooth',block:'start'}),100);}
+const pageParams=new URLSearchParams(location.search);
+if(pageParams.get('regional')==='1'){setRegion(true);setTimeout(()=>regionBox.scrollIntoView({behavior:'smooth',block:'start'}),100);}
+const presetQuery=(pageParams.get('query')||'').trim();
+if(presetQuery) q.value=presetQuery;
 async function search(){
   const query=q.value.trim();
   if(!query){q.focus();return;}
@@ -2470,6 +2473,7 @@ async function search(){
 }
 btn.addEventListener('click',search); q.addEventListener('keydown',e=>{if(e.key==='Enter')search();});
 document.querySelectorAll('.chip').forEach(b=>b.addEventListener('click',()=>{q.value=b.dataset.q||'';search();}));
+if(presetQuery) setTimeout(search,60);
 </script>
 </body></html>`);
 });
@@ -2539,7 +2543,7 @@ app.get('/api/transfer-contact', async (req, res) => {
 const GNE_OFFICIAL_SEARCH_URL = 'https://search.gne.go.kr/home/front/Search.jsp';
 const GNE_OFFICIAL_SEARCH_FORM_TTL_MS = 12 * 60 * 60 * 1000;
 const GNE_OFFICIAL_SEARCH_QUERY_TTL_MS = 30 * 60 * 1000;
-const GNE_OFFICIAL_SEARCH_MAX_RESULTS = 5;
+const GNE_OFFICIAL_SEARCH_MAX_RESULTS = 8;
 let GNE_OFFICIAL_SEARCH_FORM_CACHE = null;
 const GNE_OFFICIAL_SEARCH_QUERY_CACHE = new Map();
 
@@ -2715,7 +2719,10 @@ function officialGneUrlFromRaw(rawUrl, baseUrl = GNE_OFFICIAL_SEARCH_URL) {
     }
 
     if (u.hostname === 'search.gne.go.kr') return '';
-    if (!(u.hostname === 'gne.go.kr' || u.hostname.endsWith('.gne.go.kr'))) return '';
+    // 자동검색 결과는 경상남도교육청 '본청 누리집(www.gne.go.kr)'만 사용합니다.
+    // 교육지원청/직속기관 등 *.gne.go.kr 하위 사이트는 이 검색에서 제외합니다.
+    if (!(u.hostname === 'www.gne.go.kr' || u.hostname === 'gne.go.kr')) return '';
+    if (u.hostname === 'gne.go.kr') u.hostname = 'www.gne.go.kr';
     u.hash = '';
     return u.href;
   } catch (_) {
@@ -2726,11 +2733,38 @@ function officialGneUrlFromRaw(rawUrl, baseUrl = GNE_OFFICIAL_SEARCH_URL) {
 function officialResultType(url) {
   const u = String(url || '');
   if (/\/pr\/user\/bbs\/BD_selectBbs/i.test(u)) return '보도자료';
+  if (/businessinfo\.jsp|business[_-]?info|biz[_-]?info/i.test(u)) return '사업안내';
   if (/\/user\/bbs\/BD_selectBbs/i.test(u)) return '게시자료';
   if (/deptBsnsAsgn|bu\d+_organ|업무분장/i.test(u)) return '업무분장';
   if (/\/www\/buseo|bu\d+_info/i.test(u)) return '부서안내';
   if (/\.pdf(?:\?|$)|\.hwp[x]?(?:\?|$)|\.docx?(?:\?|$)|\.xlsx?(?:\?|$)/i.test(u)) return '첨부자료';
   return '공식페이지';
+}
+
+function isBusinessGuideResult(result) {
+  if (!result) return false;
+  const title = compactText(result.title || '');
+  const url = String(result.url || '');
+  return result.type === '사업안내'
+    || title === '사업안내'
+    || title.endsWith('사업안내')
+    || /businessinfo\.jsp|business[_-]?info|biz[_-]?info/i.test(url);
+}
+
+function deriveDepartmentHomepageUrl(results) {
+  const rows = Array.isArray(results) ? results : [];
+  // 검색 결과에 실제 부서안내 페이지가 있으면 그것을 가장 먼저 사용합니다.
+  const exact = rows.find(r => r && r.type === '부서안내' && /bu\d+_info\.jsp/i.test(String(r.url || '')));
+  if (exact) return exact.url;
+
+  // 같은 부서의 다른 본청 페이지에서 buseo 번호를 얻어 부서 대표 안내 페이지를 구성합니다.
+  for (const r of rows) {
+    const m = String(r && r.url || '').match(/https:\/\/www\.gne\.go\.kr\/www\/buseo(\d+)\//i);
+    if (!m) continue;
+    const no = m[1];
+    return `https://www.gne.go.kr/www/buseo${no}/bu${no}_info.jsp`;
+  }
+  return '';
 }
 
 function cleanOfficialSearchSnippet(text, title) {
@@ -2790,9 +2824,16 @@ function parseGneOfficialSearchResults(html, query) {
     if (tokens.length && titleTokenHits === tokens.length) score += 130;
     if (!titleTokenHits && !snippetTokenHits && queryCore && !titleC.includes(queryCore) && !snippetC.includes(queryCore)) continue;
 
-    const type = officialResultType(url);
-    if (type === '보도자료' || type === '게시자료') score += 120;
-    else if (type === '업무분장' || type === '부서안내') score += 30;
+    let type = officialResultType(url);
+    // 보도자료는 민원 안내 자동검색 결과에서 완전히 제외합니다.
+    if (type === '보도자료' || /\/pr\//i.test(url)) continue;
+    if (/사업\s*안내/.test(title)) type = '사업안내';
+
+    // 사업안내 페이지가 존재하면 항상 최상단에 오도록 강하게 우선합니다.
+    if (type === '사업안내') score += 1500;
+    else if (type === '부서안내') score += 220;
+    else if (type === '업무분장') score += 80;
+    else if (type === '게시자료') score += 40;
 
     const dateMatch = context.match(/20\d{2}[.\/-]\s*\d{1,2}[.\/-]\s*\d{1,2}/);
     const date = dateMatch ? dateMatch[0].replace(/\s+/g, '') : '';
@@ -2824,6 +2865,14 @@ function saveOfficialSearchCache(query, data) {
   return data;
 }
 
+function officialSearchQueryVariants(query) {
+  const normal = String(query || '').replace(/\s+/g, ' ').trim();
+  if (!normal) return [];
+  // 띄어쓰기 유무와 관계없이 같은 사업명을 찾도록 붙여쓴 검색어도 함께 조회합니다.
+  const compact = normal.replace(/\s+/g, '');
+  return [...new Set([normal, compact].filter(q => q && q.length >= 2))];
+}
+
 async function searchGneOfficialSite(rawQuery) {
   const query = officialSearchCore(rawQuery);
   if (!query) return { query: '', results: [] };
@@ -2831,9 +2880,34 @@ async function searchGneOfficialSite(rawQuery) {
   if (cached) return cached;
 
   try {
-    const { html, searchUrl } = await fetchGneOfficialSearchHtml(query, 2400);
-    const results = parseGneOfficialSearchResults(html, query);
-    return saveOfficialSearchCache(query, { query, results, searchUrl, source: '경상남도교육청 통합검색' });
+    const variants = officialSearchQueryVariants(query);
+    const fetched = await Promise.allSettled(
+      variants.map(q => fetchGneOfficialSearchHtml(q, 2400).then(x => ({ ...x, variant: q })))
+    );
+
+    const merged = [];
+    let searchUrl = '';
+    for (const item of fetched) {
+      if (item.status !== 'fulfilled') continue;
+      searchUrl = searchUrl || item.value.searchUrl || '';
+      merged.push(...parseGneOfficialSearchResults(item.value.html, query));
+    }
+
+    const uniq = new Map();
+    merged
+      .filter(r => r && r.type !== '보도자료' && !/\/pr\//i.test(String(r.url || '')))
+      .sort((a,b) => {
+        const ab = isBusinessGuideResult(a) ? 1 : 0;
+        const bb = isBusinessGuideResult(b) ? 1 : 0;
+        return bb - ab || (b.score || 0) - (a.score || 0) || (a.order || 0) - (b.order || 0);
+      })
+      .forEach(r => {
+        const key = `${r.url}|${compactText(r.title || '')}`;
+        if (!uniq.has(key)) uniq.set(key, r);
+      });
+
+    const results = [...uniq.values()].slice(0, GNE_OFFICIAL_SEARCH_MAX_RESULTS);
+    return saveOfficialSearchCache(query, { query, results, searchUrl, source: '경상남도교육청 본청 누리집 통합검색' });
   } catch (err) {
     console.error('경남교육청 공식 누리집 자동검색 오류:', err && err.message ? err.message : err);
     return { query, results: [], error: true };
@@ -2867,7 +2941,7 @@ function extractOfficialPageExcerpt(html, title, query) {
 
 async function fetchOfficialPageExcerpt(result, query) {
   if (!result || !result.url) return '';
-  if (!['보도자료','게시자료','공식페이지'].includes(result.type)) return '';
+  if (!['사업안내','게시자료','공식페이지'].includes(result.type)) return '';
   try {
     const html = await fetchOfficialGneHtml(result.url, 950);
     return extractOfficialPageExcerpt(html, result.title, query);
@@ -2929,10 +3003,15 @@ async function buildGneOfficialSearchResponse(rawQuery) {
     related = summarizeRelatedDepartmentFromContacts(contactQuery, contacts);
   } catch (_) {}
 
-  // 첫 번째 공식 게시물의 본문 일부를 1초 이내로만 읽어 옵니다.
-  const excerpt = await fetchOfficialPageExcerpt(search.results[0], search.query);
+  // 사업안내가 있으면 그 페이지를 대표 자료로, 없으면 담당부서 누리집을 우선 링크합니다.
+  const businessGuide = search.results.find(isBusinessGuideResult) || null;
+  const departmentHomepageUrl = deriveDepartmentHomepageUrl(search.results);
+  const primaryResult = businessGuide || search.results[0];
 
-  const lines = [`🔎 경상남도교육청 공식 누리집에서 '${search.query}' 관련 자료를 찾았어요.`];
+  // 대표 공식자료의 본문 일부를 1초 이내로만 읽어 옵니다.
+  const excerpt = await fetchOfficialPageExcerpt(primaryResult, search.query);
+
+  const lines = [`🔎 경상남도교육청 본청 누리집에서 '${search.query}' 관련 자료를 찾았어요.`];
   if (related && related.department) {
     lines.push('', `관련 부서: ${related.department}`);
     if (related.duties.length) {
@@ -2946,25 +3025,36 @@ async function buildGneOfficialSearchResponse(rawQuery) {
     const meta = [r.type, r.date].filter(Boolean).join(' · ');
     lines.push(`${i + 1}. ${r.title}${meta ? ` (${meta})` : ''}`);
   });
-  lines.push('', '※ 경상남도교육청 공식 통합검색 결과를 바탕으로 안내하며, 자료에 없는 내용은 임의로 만들지 않습니다.');
+  lines.push('', '※ 경상남도교육청 본청 누리집 검색 결과만 안내하며, 보도자료는 제외합니다. 자료에 없는 내용은 임의로 만들지 않습니다.');
 
   const text = lines.join('\n').slice(0, 980);
-  const buttons = search.results.slice(0, 3).map((r, i) => ({
-    label: i === 0 ? '첫 번째 자료 보기' : `${i + 1}번째 자료 보기`,
+  const buttons = [];
+
+  if (businessGuide && businessGuide.url) {
+    buttons.push({ label: '📌 사업안내', action: 'webLink', webLinkUrl: businessGuide.url });
+  } else if (departmentHomepageUrl) {
+    buttons.push({ label: '🏢 담당부서 누리집', action: 'webLink', webLinkUrl: departmentHomepageUrl });
+  } else if (primaryResult && primaryResult.url) {
+    buttons.push({ label: '📄 관련 자료 보기', action: 'webLink', webLinkUrl: primaryResult.url });
+  }
+
+  // 모든 공식자료 안내 카드 아래에 본청 업무담당자 검색 버튼을 함께 제공합니다.
+  buttons.push({
+    label: '🔎 업무담당자 검색',
     action: 'webLink',
-    webLinkUrl: r.url
-  }));
+    webLinkUrl: `${PUBLIC_BASE_URL}/staff-search?query=${encodeURIComponent(search.query || '')}`
+  });
 
   const outputs = [{ simpleText: { text } }];
-  if (buttons.length) {
-    outputs.push({
-      basicCard: {
-        title: '경남교육청 공식 자료',
-        description: '검색된 공식 자료의 원문을 확인할 수 있어요.',
-        buttons
-      }
-    });
-  }
+  outputs.push({
+    basicCard: {
+      title: '경남교육청 공식 안내',
+      description: businessGuide
+        ? '사업안내 페이지를 우선 연결합니다.'
+        : (departmentHomepageUrl ? '관련 담당부서 누리집을 우선 연결합니다.' : '관련 공식자료를 확인할 수 있어요.'),
+      buttons
+    }
+  });
 
   return {
     version: '2.0',
