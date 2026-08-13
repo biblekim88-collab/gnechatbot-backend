@@ -1455,6 +1455,25 @@ function rankHqContactRows(query, rows, maxResults = 10) {
     }
   }
 
+  // 여러 단어 검색은 단어 사이에 다른 말이 끼어 있어도 모두 포함된 행을 우선합니다.
+  // 예: "중등인사 인사기획" → "중등인사 및 인사기획" 매칭
+  if (tokens.length >= 2) {
+    const compactTokens = tokens.map(compactText).filter(Boolean);
+    const allTokenRows = [];
+    for (const row of (rows || [])) {
+      if (isExcludedHqLeadershipRow(row)) continue;
+      const haystack = compactText(`${row.department || ''} ${row.team || ''} ${row.duty || ''}`);
+      if (!compactTokens.every(t => haystack.includes(t))) continue;
+      const meta = hqRowMatchMeta(raw, row);
+      allTokenRows.push({ row, ...meta });
+    }
+    if (allTokenRows.length) {
+      allTokenRows.sort((a,b) => b.score-a.score || String(a.row.department).localeCompare(String(b.row.department),'ko'));
+      const rowsMatched = allTokenRows.map(x=>x.row);
+      return maxResults && maxResults > 0 ? rowsMatched.slice(0,maxResults) : rowsMatched;
+    }
+  }
+
   const ranked = [];
   for (const row of (rows || [])) {
     // 과장·사무관·국장·교육감·각종 담당관/장학관 등 간부 전화번호는 표출하지 않습니다.
@@ -2919,15 +2938,40 @@ function hl(text,terms){
   const uniq=[...new Set((terms||[]).map(t=>String(t||'').trim()).filter(Boolean))]
     .sort((a,b)=>b.length-a.length);
   if(!uniq.length) return esc(raw);
-  const re=new RegExp('('+uniq.map(escRe).join('|')+')','gi');
-  let html='', last=0, m;
-  while((m=re.exec(raw))!==null){
-    html+=esc(raw.slice(last,m.index));
-    html+='<span class="hl">'+esc(m[0])+'</span>';
-    last=m.index+m[0].length;
-    if(m[0].length===0) re.lastIndex++;
-  }
-  html+=esc(raw.slice(last));
+
+  // 각 검색어를 서로 독립적으로 찾습니다.
+  // 예: 검색어 "중등인사 인사기획", 실제 문장 "중등인사 및 인사기획"
+  //     → "중등인사"와 "인사기획"만 각각 강조하고 중간의 "및"은 그대로 둡니다.
+  const lower=raw.toLowerCase();
+  const ranges=[];
+  uniq.forEach(term=>{
+    const needle=term.toLowerCase();
+    if(!needle) return;
+    let from=0;
+    while(from<lower.length){
+      const idx=lower.indexOf(needle,from);
+      if(idx<0) break;
+      ranges.push([idx,idx+needle.length]);
+      from=idx+Math.max(1,needle.length);
+    }
+  });
+  if(!ranges.length) return esc(raw);
+
+  ranges.sort((a,b)=>a[0]-b[0] || b[1]-a[1]);
+  const merged=[];
+  ranges.forEach(r=>{
+    const last=merged[merged.length-1];
+    if(!last || r[0]>last[1]) merged.push(r.slice());
+    else if(r[1]>last[1]) last[1]=r[1];
+  });
+
+  let html='', pos=0;
+  merged.forEach(([start,end])=>{
+    html+=esc(raw.slice(pos,start));
+    html+='<span class="hl">'+esc(raw.slice(start,end))+'</span>';
+    pos=end;
+  });
+  html+=esc(raw.slice(pos));
   return html;
 }
 function tel(v){const m=String(v||'').match(/0\d{1,2}-\d{3,4}-\d{4}/);return m?m[0]:'';}
