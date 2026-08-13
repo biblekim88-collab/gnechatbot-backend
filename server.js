@@ -2959,7 +2959,7 @@ async function search(){
     const r=await fetch('/api/hq-contact?query='+encodeURIComponent(query),{cache:'no-store'});
     const d=await r.json();
     if(!r.ok||!d.ok) throw new Error(d.message||'검색에 실패했습니다.');
-    const terms=query.split(/\s+/).filter(Boolean);
+    const terms=query.split(/\\s+/).filter(Boolean);
     const renderContact=c=>{
       const p=tel(c.phone), phone=p?'<a class="phone" href="tel:'+p.replace(/-/g,'')+'">☎ '+esc(p)+'</a>':'<div class="phone">☎ '+esc(c.phone||'')+'</div>';
       return '<div class="result"><div class="dept">'+hl(c.department||'',terms)+(c.team?' / '+hl(c.team,terms):'')+'</div>'+phone+'<div class="duty">'+hl(c.duty||'',terms)+'</div></div>';
