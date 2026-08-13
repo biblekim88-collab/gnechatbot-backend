@@ -1843,6 +1843,37 @@ function kakaoSpecialTeacherPersonnelGuideResponse() {
   };
 }
 
+function isGneCallCenterContactQuery(query) {
+  const q = compactText(String(query || ''))
+    .replace(/경상남도교육청|경남교육청|교육청|본청/g, '')
+    .replace(/업무담당자|담당자|담당부서|담당과|담당|업무|검색|조회|안내|문의|전화번호|전화|연락처/g, '');
+  return /^(경남교육콜센터|교육콜센터|콜센터)$/.test(q);
+}
+
+function kakaoGneCallCenterContactResponse() {
+  const contact = {
+    department: '총무과',
+    team: '민원기록',
+    phone: '055-268-1367',
+    duty: '청원제도 운영 ㆍ 경남교육 콜센터 운영·관리 ㆍ 안내원 직종 관리 및 교육 ㆍ 제증명 및 인ㆍ허가 민원 운영ㆍ관리 ㆍ 민원기록담당 일반 서무에 관한 사항 ㆍ 민원처리자 심리상담비 지원 ㆍ 민원처리기준표 및 민원편람 관리'
+  };
+  return {
+    version: '2.0',
+    template: {
+      outputs: [
+        { simpleText: { text: `경남교육콜센터 담당자입니다.\n\n${contact.department} / ${contact.team}\n☎ ${contact.phone}\n\nㆍ 청원제도 운영\nㆍ 경남교육 콜센터 운영·관리\nㆍ 안내원 직종 관리 및 교육\nㆍ 제증명 및 인ㆍ허가 민원 운영ㆍ관리\nㆍ 민원기록담당 일반 서무에 관한 사항\nㆍ 민원처리자 심리상담비 지원\nㆍ 민원처리기준표 및 민원편람 관리` } },
+        {
+          basicCard: {
+            title: '총무과 / 민원기록',
+            description: contact.duty,
+            buttons: [{ label: '☎ 담당자 전화', action: 'phone', phoneNumber: '0552681367' }]
+          }
+        }
+      ]
+    }
+  };
+}
+
 function kakaoHqContactResponseText(query, contacts) {
   const limited = (contacts || []).slice(0, 3);
   if (!limited.length) {
@@ -1869,6 +1900,11 @@ function kakaoHqContactResponseText(query, contacts) {
 async function kakaoHqContactResponse(intent) {
   const query = String((intent && intent.query) || '').trim();
   if (!query) return kakaoHqContactAskResponse();
+
+  // 경남교육콜센터 담당자는 민원기록 담당 1건만 고정 안내합니다.
+  if (isGneCallCenterContactQuery(query)) {
+    return kakaoGneCallCenterContactResponse();
+  }
 
   // 학교급/직위가 특정되지 않은 교원 인사는 유치원/초등/중등/특수 담당부서를 먼저 안내합니다.
   if (isGeneralTeacherPersonnelQuery(query)) {
@@ -2879,13 +2915,20 @@ const regionToggle=document.getElementById('regionToggle'), regionBox=document.g
 function esc(v){return String(v??'').replace(/[&<>\"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[m]));}
 function escRe(v){return String(v||'').replace(/[.*+?^$(){}|[\\]]/g,function(m){return String.fromCharCode(92)+m;});}
 function hl(text,terms){
-  let out=esc(text);
-  const uniq=[...new Set((terms||[]).filter(Boolean))].sort((a,b)=>b.length-a.length);
-  uniq.forEach(t=>{
-    const re=new RegExp('('+escRe(esc(t))+')','gi');
-    out=out.replace(re,'<span class="hl">$1</span>');
-  });
-  return out;
+  const raw=String(text??'');
+  const uniq=[...new Set((terms||[]).map(t=>String(t||'').trim()).filter(Boolean))]
+    .sort((a,b)=>b.length-a.length);
+  if(!uniq.length) return esc(raw);
+  const re=new RegExp('('+uniq.map(escRe).join('|')+')','gi');
+  let html='', last=0, m;
+  while((m=re.exec(raw))!==null){
+    html+=esc(raw.slice(last,m.index));
+    html+='<span class="hl">'+esc(m[0])+'</span>';
+    last=m.index+m[0].length;
+    if(m[0].length===0) re.lastIndex++;
+  }
+  html+=esc(raw.slice(last));
+  return html;
 }
 function tel(v){const m=String(v||'').match(/0\d{1,2}-\d{3,4}-\d{4}/);return m?m[0]:'';}
 function setRegion(open){regionBox.style.display=open?'block':'none';regionToggle.textContent=open?'🏫 지역교육청 안내 닫기':'🏫 지역교육청 안내 보기';}
@@ -2901,9 +2944,10 @@ async function loadDepartments(){
   }catch(_){depts.innerHTML='<div class="empty">본청 부서 목록을 불러오지 못했습니다.</div>';}
 }
 loadDepartments();
-setDept(true);
 const pageParams=new URLSearchParams(location.search);
-if(pageParams.get('regional')==='1'){setRegion(true);setTimeout(()=>regionBox.scrollIntoView({behavior:'smooth',block:'start'}),100);}
+const regionalMode=pageParams.get('regional')==='1';
+setDept(!regionalMode);
+if(regionalMode){setRegion(true);setTimeout(()=>regionBox.scrollIntoView({behavior:'smooth',block:'start'}),100);}
 const presetQuery=(pageParams.get('query')||'').trim();
 if(presetQuery) q.value=presetQuery;
 async function search(){
