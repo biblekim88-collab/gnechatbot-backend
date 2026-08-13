@@ -2959,7 +2959,7 @@ async function search(){
     const r=await fetch('/api/hq-contact?query='+encodeURIComponent(query),{cache:'no-store'});
     const d=await r.json();
     if(!r.ok||!d.ok) throw new Error(d.message||'검색에 실패했습니다.');
-    const terms=query.split(/\\s+/).filter(Boolean);
+    // 검색어가 여러 단어이면 각 단어를 독립적으로 강조합니다.\n    // 예: '고등학교 전입학' → 결과 문장 안에서 두 단어가 서로 떨어져 있어도 각각 파란색 표시\n    const terms=(query.match(/[가-힣A-Za-z0-9]+/g)||[]).map(x=>x.trim()).filter(Boolean);
     const renderContact=c=>{
       const p=tel(c.phone), phone=p?'<a class="phone" href="tel:'+p.replace(/-/g,'')+'">☎ '+esc(p)+'</a>':'<div class="phone">☎ '+esc(c.phone||'')+'</div>';
       return '<div class="result"><div class="dept">'+hl(c.department||'',terms)+(c.team?' / '+hl(c.team,terms):'')+'</div>'+phone+'<div class="duty">'+hl(c.duty||'',terms)+'</div></div>';
