@@ -2502,7 +2502,7 @@ function kakaoFallbackResponse(utterance, blocks, options = {}) {
   }
 
   // 첫 번째 인식 실패부터 1:1 채팅상담을 바로 노출합니다.
-  // 2회 이상 연속 실패 시에는 콜센터 및 전학 AI 참고 링크까지 추가 노출합니다.
+  // 첫 번째 인식 실패부터 1:1 채팅상담과 콜센터를 함께 노출하고, 전학 AI 참고 링크는 기존 기준대로 추가합니다.
   const cardButtons = [];
 
   if (showHumanHelp) {
@@ -2534,20 +2534,18 @@ function kakaoFallbackResponse(utterance, blocks, options = {}) {
       });
     }
 
-    if (escalated) {
-      cardButtons.push({
-        label: '☎경남교육콜센터 전화연결',
-        action: 'phone',
-        phoneNumber: '0552681004'
-      });
-    }
+    cardButtons.push({
+      label: '☎경남교육콜센터 전화연결',
+      action: 'phone',
+      phoneNumber: '0552681004'
+    });
   }
 
   const text = escalated
     ? (showTransferAi
       ? '제가 전학 관련 질문을 계속 정확히 이해하지 못했어요😥\n아래 관련 항목을 선택하시거나 고등학교 전입학 AI 안내를 참고해 주세요.\n\n💡AI 안내는 참고용이며, 실제 전입학 절차는 교육청의 공식 안내를 통해 다시 한 번 확인해 주세요.'
       : '제가 질문을 계속 정확히 이해하지 못했어요😥\n조금 더 구체적으로 말씀해주시거나 아래 관련 항목을 선택해주세요.\n\n💡궁금증이 해결되지 않았다면 1:1 채팅상담 또는 경남교육콜센터(055-268-1004)를 이용해주세요🤗')
-    : '제가 질문을 정확히 이해하지 못했어요😥\n조금 더 구체적으로 다시 말씀해주시거나 아래 관련 항목을 선택해주세요.\n\n💡바로 상담이 필요하시면 1:1 채팅상담을 이용해주세요.';
+    : '제가 질문을 정확히 이해하지 못했어요😥\n조금 더 구체적으로 다시 말씀해주시거나 아래 관련 항목을 선택해주세요.\n\n💡바로 상담이 필요하시면 1:1 채팅상담 또는 경남교육콜센터(055-268-1004)를 이용해주세요.';
 
   // 혹시 후보가 중복된 경우 제거
   const seen = new Set();
