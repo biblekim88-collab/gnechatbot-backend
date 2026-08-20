@@ -2489,17 +2489,16 @@ function kakaoFallbackResponse(utterance, blocks, options = {}) {
   const showTransferAi = !!options.showTransferAi && transferFailCount >= TRANSFER_AI_ESCALATE_AT;
   const escalated = failCount >= FAIL_STREAK_ESCALATE_AT;
   const showHumanHelp = failCount >= 1;
-  const cands = topCandidates(utterance, blocks, 3);
+  // 폴백에서는 유사 후보 몇 개만 보여주지 않고, 웰컴블록(챗봇 이용 안내)에
+  // 등록된 전체 바로연결 메뉴를 그대로 노출합니다.
+  // 따라서 웰컴블록에서 제증명·검정고시·전입학 등의 메뉴를 수정하면 폴백에도 자동 반영됩니다.
+  const welcomeBlock = blocks.find(b => (b.title || '').trim() === '챗봇 이용 안내');
+  let quickReplies = welcomeBlock ? buildBlockQuickReplies(welcomeBlock, blocks) : [];
 
-  // 관련 후보는 카카오의 노란색 바로연결(quickReplies)로 표시합니다.
-  // 유사 후보가 하나도 없으면 '질문 인식 불가 안내' 블록에 등록된 바로연결 항목을 대신 보여줍니다.
-  let quickReplies = cands
-    .map(c => makeKakaoQuickReply(blocks[c.idx]))
-    .filter(q => q.label);
-
+  // 혹시 웰컴블록을 찾지 못하는 예외 상황에서는 기존 질문 인식 불가 안내 블록 메뉴를 사용합니다.
   if (!quickReplies.length) {
     const fallbackBlock = blocks.find(b => (b.title || '').trim() === '질문 인식 불가 안내');
-    if (fallbackBlock) quickReplies = buildBlockQuickReplies(fallbackBlock, blocks).slice(0, 3);
+    if (fallbackBlock) quickReplies = buildBlockQuickReplies(fallbackBlock, blocks);
   }
 
   // 첫 번째 인식 실패부터 1:1 채팅상담을 바로 노출합니다.
