@@ -2488,18 +2488,25 @@ function kakaoFallbackResponse(utterance, blocks, options = {}) {
   const transferFailCount = Number(options.transferFailCount || 0);
   const showTransferAi = !!options.showTransferAi && transferFailCount >= TRANSFER_AI_ESCALATE_AT;
   const escalated = failCount >= FAIL_STREAK_ESCALATE_AT;
+  const showHumanHelp = failCount >= 1;
   const cands = topCandidates(utterance, blocks, 3);
 
   // 관련 후보는 카카오의 노란색 바로연결(quickReplies)로 표시합니다.
-  const quickReplies = cands
+  // 유사 후보가 하나도 없으면 '질문 인식 불가 안내' 블록에 등록된 바로연결 항목을 대신 보여줍니다.
+  let quickReplies = cands
     .map(c => makeKakaoQuickReply(blocks[c.idx]))
     .filter(q => q.label);
 
-  // 1회 실패: 상담/전화 버튼을 띄우지 않고 챗봇에 한 번 더 질문하도록 유도합니다.
-  // 2회 이상 연속 실패: 1:1 채팅상담 -> 콜센터 순서로 상담 수단을 노출합니다.
+  if (!quickReplies.length) {
+    const fallbackBlock = blocks.find(b => (b.title || '').trim() === '질문 인식 불가 안내');
+    if (fallbackBlock) quickReplies = buildBlockQuickReplies(fallbackBlock, blocks).slice(0, 3);
+  }
+
+  // 첫 번째 인식 실패부터 1:1 채팅상담을 바로 노출합니다.
+  // 2회 이상 연속 실패 시에는 콜센터 및 전학 AI 참고 링크까지 추가 노출합니다.
   const cardButtons = [];
 
-  if (escalated) {
+  if (showHumanHelp) {
     // 고등학교 전학 관련 질문을 연속 2회 이상 못 알아들었을 때만
     // 참고용 GPT 링크를 상담 수단보다 먼저 노출합니다.
     if (showTransferAi) {
@@ -2528,18 +2535,20 @@ function kakaoFallbackResponse(utterance, blocks, options = {}) {
       });
     }
 
-    cardButtons.push({
-      label: '☎경남교육콜센터 전화연결',
-      action: 'phone',
-      phoneNumber: '0552681004'
-    });
+    if (escalated) {
+      cardButtons.push({
+        label: '☎경남교육콜센터 전화연결',
+        action: 'phone',
+        phoneNumber: '0552681004'
+      });
+    }
   }
 
   const text = escalated
     ? (showTransferAi
       ? '제가 전학 관련 질문을 계속 정확히 이해하지 못했어요😥\n아래 관련 항목을 선택하시거나 고등학교 전입학 AI 안내를 참고해 주세요.\n\n💡AI 안내는 참고용이며, 실제 전입학 절차는 교육청의 공식 안내를 통해 다시 한 번 확인해 주세요.'
       : '제가 질문을 계속 정확히 이해하지 못했어요😥\n조금 더 구체적으로 말씀해주시거나 아래 관련 항목을 선택해주세요.\n\n💡궁금증이 해결되지 않았다면 1:1 채팅상담 또는 경남교육콜센터(055-268-1004)를 이용해주세요🤗')
-    : '제가 질문을 정확히 이해하지 못했어요😥\n조금 더 구체적으로 다시 말씀해주시거나 아래 관련 항목을 선택해주세요.';
+    : '제가 질문을 정확히 이해하지 못했어요😥\n조금 더 구체적으로 다시 말씀해주시거나 아래 관련 항목을 선택해주세요.\n\n💡바로 상담이 필요하시면 1:1 채팅상담을 이용해주세요.';
 
   // 혹시 후보가 중복된 경우 제거
   const seen = new Set();
