@@ -2483,6 +2483,44 @@ function buildBlockQuickReplies(block, blocks) {
   }).slice(0,10);
 }
 
+const EPEOPLE_URL = 'https://www.epeople.go.kr/index.jsp';
+
+function isOneToOneChatRequest(raw) {
+  const q = compactText(raw || '');
+  return ['1:1채팅상담','1:1채팅','일대일채팅상담','일대일채팅','채팅상담'].includes(q);
+}
+
+function kakaoOneToOneChatNoticeResponse(blocks) {
+  const chatBlock = blocks.find(b => (b.title || '').trim() === '일대일 채팅 상담 안내');
+  const chatBlockId = getKakaoBlockId(chatBlock);
+  const buttons = [
+    { label: '국민신문고 바로가기', action: 'webLink', webLinkUrl: EPEOPLE_URL }
+  ];
+
+  // 안내를 확인한 뒤에만 실제 1:1 상담 블록으로 이동하게 합니다.
+  if (chatBlockId) {
+    buttons.push({
+      label: '단순 문의 상담 계속하기',
+      action: 'block',
+      blockId: chatBlockId,
+      messageText: '단순 문의 상담 계속하기'
+    });
+  }
+
+  return {
+    version: '2.0',
+    template: {
+      outputs: [{
+        basicCard: {
+          title: '1:1 채팅상담 이용 안내',
+          description: '1:1 채팅은 교육 관련 단순 질의·이용 안내를 위한 상담 서비스입니다.\n\n학교·교직원 관련 민원 및 신고, 사실관계 확인, 적정성 판단, 조사·조치가 필요한 사항은 상담하지 않습니다.\n\n공식적인 민원 처리가 필요한 경우 국민신문고를 이용해 주세요.',
+          buttons
+        }
+      }]
+    }
+  };
+}
+
 function kakaoFallbackResponse(utterance, blocks, options = {}) {
   const failCount = Number(options.failCount || 0);
   const transferFailCount = Number(options.transferFailCount || 0);
@@ -2516,23 +2554,12 @@ function kakaoFallbackResponse(utterance, blocks, options = {}) {
       });
     }
 
-    const chatBlock = blocks.find(b => (b.title || '').trim() === '일대일 채팅 상담 안내');
-    const chatBlockId = getKakaoBlockId(chatBlock);
-    if (chatBlockId) {
-      cardButtons.push({
-        label: '1:1 채팅상담',
-        action: 'block',
-        blockId: chatBlockId,
-        messageText: '1:1 채팅상담'
-      });
-    } else {
-      // 혹시 블록 ID를 찾지 못해도 스킬 전체가 깨지지 않도록 message 방식으로 안전하게 처리
-      cardButtons.push({
-        label: '1:1 채팅상담',
-        action: 'message',
-        messageText: '1:1 채팅상담'
-      });
-    }
+    // 바로 1:1 상담 블록으로 보내지 않고, 먼저 이용범위/국민신문고 안내를 보여줍니다.
+    cardButtons.push({
+      label: '1:1 채팅상담',
+      action: 'message',
+      messageText: '1:1 채팅상담'
+    });
 
     cardButtons.push({
       label: '☎경남교육콜센터 전화연결',
@@ -3746,6 +3773,14 @@ app.post('/api/kakao-skill', async (req, res) => {
     const blockLabel = kakaoInteraction.currentBlock || kakaoInteraction.lastBlock || kakaoInteraction.referrerBlock || '카카오 블록 호출';
     trackQuery('[블록 호출]', blockLabel, true, 'kakao-block-event', 'kakao:' + kakaoUserId, kakaoInteraction);
     return res.json(withStaffSearchQuickReply(kakaoFallbackResponse('', blocks, { failCount: 0 })));
+  }
+
+  // 1:1 채팅상담 진입 전 안내: 단순 질의만 상담하며 공식 민원은 국민신문고로 안내합니다.
+  if (isOneToOneChatRequest(utterance)) {
+    resetKakaoFailStreak(kakaoUserId);
+    resetKakaoTransferFailStreak(kakaoUserId);
+    trackQuery(utterance, '1:1 채팅상담 이용 안내', true, 'kakao-chat-notice', 'kakao:' + kakaoUserId, kakaoInteraction);
+    return res.json(kakaoOneToOneChatNoticeResponse(blocks));
   }
 
   // 담당자 메뉴 자체를 누른 경우에는 블록 파라미터나 일반 시나리오 매칭보다 먼저 처리합니다.
