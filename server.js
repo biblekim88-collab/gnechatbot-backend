@@ -811,7 +811,11 @@ async function kakaoTransferContactResponse(intent) {
 
 
 // ============ 1:1 채팅상담 이용범위 안내 ============
-const ONE_TO_ONE_NOTICE_TRIGGER = '민원신고이용안내';
+// 주의: 이 문구는 사용자에게 보낸 메시지처럼 채팅창에 그대로 보입니다(action:'message' 특성).
+// 그리고 오픈빌더에 이미 등록된 발화/블록명과 절대 겹치면 안 됩니다 — 겹치면 카카오가
+// 폴백 스킬을 거치지 않고 그 기존 블록으로 먼저 매칭시켜 버립니다. 배포 전 오픈빌더에서
+// 아래 문구와 동일한 발화/블록이 이미 있는지 반드시 확인하세요.
+const ONE_TO_ONE_NOTICE_TRIGGER = '1:1상담 이용범위 안내';
 
 function kakaoOneToOneNoticeResponse(blocks) {
   const chatBlock = blocks.find(b => (b.title || '').trim() === '일대일 채팅 상담 안내');
@@ -853,7 +857,8 @@ function kakaoOneToOneNoticeResponse(blocks) {
 // ============ 첫인사(웰컴 블록) 이용범위 안내 ============
 // 오픈빌더 "챗봇 이용 안내" 웰컴 블록의 스킬 파라미터/버튼 messageText를
 // 이 트리거 문구로 설정하면, 첫 화면에서도 1:1 상담과 동일한 이용범위 고지가 먼저 노출됩니다.
-const WELCOME_NOTICE_TRIGGER = '챗봇시작안내';
+// 마찬가지로 오픈빌더에 이미 등록된 발화/블록명과 겹치지 않는지 배포 전 반드시 확인하세요.
+const WELCOME_NOTICE_TRIGGER = '챗봇 이용범위 안내 보기';
 
 function kakaoWelcomeNoticeResponse(blocks) {
   const welcomeBlock = blocks.find(b => (b.title || '').trim() === '챗봇 이용 안내');
