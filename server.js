@@ -2487,7 +2487,29 @@ const EPEOPLE_URL = 'https://www.epeople.go.kr/index.jsp';
 
 function isOneToOneChatRequest(raw) {
   const q = compactText(raw || '');
-  return ['1:1채팅상담','1:1채팅','일대일채팅상담','일대일채팅','채팅상담'].includes(q);
+  return ['1:1채팅상담','1:1채팅','일대일채팅상담','일대일채팅','채팅상담','상담이용범위확인'].includes(q);
+}
+
+function kakaoWelcomeNoticeResponse(blocks) {
+  const welcomeBlock = blocks.find(b => (b.title || '').trim() === '챗봇 이용 안내');
+  const quickReplies = welcomeBlock ? buildBlockQuickReplies(welcomeBlock, blocks) : [];
+
+  return {
+    version: '2.0',
+    template: {
+      outputs: [{
+        basicCard: {
+          title: '경상남도교육청 민원 챗봇 이용 안내',
+          description: '안녕하세요. 경상남도교육청 민원 챗봇입니다.\n\n본 챗봇은 교육 관련 단순 질의·이용 안내를 위한 서비스입니다.\n\n학교·교직원 관련 민원 및 신고, 사실관계 확인, 적정성 판단, 조사·조치가 필요한 사항은 상담하지 않습니다.\n\n공식적인 민원 처리가 필요한 경우 국민신문고를 이용해 주세요.',
+          buttons: [
+            { label: '국민신문고 바로가기', action: 'webLink', webLinkUrl: EPEOPLE_URL },
+            { label: '1:1 채팅상담', action: 'message', messageText: '상담 이용범위 확인' }
+          ]
+        }
+      }],
+      ...(quickReplies.length ? { quickReplies } : {})
+    }
+  };
 }
 
 function kakaoOneToOneChatNoticeResponse(blocks) {
@@ -3772,7 +3794,7 @@ app.post('/api/kakao-skill', async (req, res) => {
     // 스킬이 발화 없이 호출된 경우에도 카카오가 넘긴 블록 흐름은 통계에 남깁니다.
     const blockLabel = kakaoInteraction.currentBlock || kakaoInteraction.lastBlock || kakaoInteraction.referrerBlock || '카카오 블록 호출';
     trackQuery('[블록 호출]', blockLabel, true, 'kakao-block-event', 'kakao:' + kakaoUserId, kakaoInteraction);
-    return res.json(withStaffSearchQuickReply(kakaoFallbackResponse('', blocks, { failCount: 0 })));
+    return res.json(kakaoWelcomeNoticeResponse(blocks));
   }
 
   // 1:1 채팅상담 진입 전 안내: 단순 질의만 상담하며 공식 민원은 국민신문고로 안내합니다.
