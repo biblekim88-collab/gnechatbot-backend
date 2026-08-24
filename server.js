@@ -811,7 +811,7 @@ async function kakaoTransferContactResponse(intent) {
 
 
 // ============ 1:1 채팅상담 이용범위 안내 ============
-const ONE_TO_ONE_NOTICE_TRIGGER = '1대1상담이용안내';
+const ONE_TO_ONE_NOTICE_TRIGGER = '민원신고이용안내';
 
 function kakaoOneToOneNoticeResponse(blocks) {
   const chatBlock = blocks.find(b => (b.title || '').trim() === '일대일 채팅 상담 안내');
