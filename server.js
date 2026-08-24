@@ -850,6 +850,35 @@ function kakaoOneToOneNoticeResponse(blocks) {
   };
 }
 
+// ============ 첫인사(웰컴 블록) 이용범위 안내 ============
+// 오픈빌더 "챗봇 이용 안내" 웰컴 블록의 스킬 파라미터/버튼 messageText를
+// 이 트리거 문구로 설정하면, 첫 화면에서도 1:1 상담과 동일한 이용범위 고지가 먼저 노출됩니다.
+const WELCOME_NOTICE_TRIGGER = '챗봇시작안내';
+
+function kakaoWelcomeNoticeResponse(blocks) {
+  const welcomeBlock = blocks.find(b => (b.title || '').trim() === '챗봇 이용 안내');
+  const quickReplies = welcomeBlock ? buildBlockQuickReplies(welcomeBlock, blocks) : [];
+
+  return {
+    version: '2.0',
+    template: {
+      outputs: [
+        { simpleText: { text: '안녕하세요! 경상남도교육청 민원 챗봇입니다🤗\n교육 관련 궁금한 점을 간단히 안내해 드려요.' } },
+        {
+          basicCard: {
+            title: '이용범위 안내',
+            description: '이 챗봇과 1:1 채팅은 교육 관련 단순 질의·이용 안내만 가능합니다.\n학교·교직원 관련 민원 및 신고, 사실관계 확인, 적정성 판단, 조사·조치가 필요한 사항은 국민신문고를 이용해 주세요.',
+            buttons: [
+              { label: '국민신문고 바로가기', action: 'webLink', webLinkUrl: 'https://www.epeople.go.kr/index.jsp' }
+            ]
+          }
+        }
+      ],
+      quickReplies: quickReplies.slice(0, 10)
+    }
+  };
+}
+
 // ============ 경상남도교육청 본청 업무담당자 실시간 검색 ============
 // 경남교육청이 제공하는 공식 "업무검색" 페이지의 검색 폼을 그대로 이용합니다.
 // 유료 AI API를 사용하지 않으며, 담당업무/전화번호를 server.js에 고정하지 않습니다.
@@ -3770,6 +3799,14 @@ app.post('/api/kakao-skill', async (req, res) => {
   const kakaoUserId = (req.body && req.body.userRequest && req.body.userRequest.user && req.body.userRequest.user.id) || '';
   const kakaoInteraction = getKakaoInteractionMeta(req.body || {});
   const blocks = getEffectiveUtterances();
+
+  // 첫인사(웰컴 블록)에서도 1:1 상담과 동일하게 이용범위/국민신문고 안내를 먼저 보여줍니다.
+  if (compactText(utterance) === compactText(WELCOME_NOTICE_TRIGGER)) {
+    resetKakaoFailStreak(kakaoUserId);
+    resetKakaoTransferFailStreak(kakaoUserId);
+    trackQuery(utterance, '챗봇 이용 안내(첫인사) - 이용범위 고지', true, 'kakao-welcome-notice', 'kakao:' + kakaoUserId, kakaoInteraction);
+    return res.json(kakaoWelcomeNoticeResponse(blocks));
+  }
 
   // 1:1 상담 버튼을 누르면 실제 상담 연결 전에 이용범위와 국민신문고를 먼저 안내합니다.
   if (compactText(utterance) === compactText(ONE_TO_ONE_NOTICE_TRIGGER)) {
