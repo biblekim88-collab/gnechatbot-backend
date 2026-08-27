@@ -2985,7 +2985,7 @@ app.get('/staff-search', (req, res) => {
     <h1>본청 업무담당자 검색</h1>
     <div class="sub">찾으시는 <b>업무명만</b> 입력해 주세요. ‘담당자’라고 붙이지 않아도 됩니다.<br>경상남도교육청 <b>본청</b> 공식 업무분장 정보를 기준으로 검색합니다.</div>
     <div class="scope"><b>지역 업무는 별도 확인이 필요합니다.</b><br>초·중학교 전입학, 학원·교습소 등 지역교육지원청 담당 업무는 아래 <b>지역교육청 안내</b>에서 해당 교육지원청 누리집의 업무분장을 확인해 주세요.</div>
-    <div id="kakaoNotice" class="kakaoNotice">📱 카카오톡 안에서는 전화 버튼이 바로 안 걸릴 수 있어요. 번호를 <b>길게 눌러 전화 걸기</b>를 선택하거나, 번호 옆 <b>복사</b> 버튼으로 복사한 뒤 전화 앱에 붙여넣어 주세요. (우측 상단 ‘⋯’ &gt; 다른 브라우저로 열기도 가능해요)</div>
+    <div id="kakaoNotice" class="kakaoNotice">📱 번호를 누르면 바로 전화가 걸려요. 혹시 안 걸리면 번호 옆 <b>복사</b> 버튼으로 복사해서 전화 앱에 붙여넣어 주세요.</div>
     <div class="search">
       <input id="q" type="search" placeholder="예: 다자녀" autocomplete="off">
       <button id="btn" type="button">검색</button>
