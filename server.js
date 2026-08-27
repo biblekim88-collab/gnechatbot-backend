@@ -809,81 +809,6 @@ async function kakaoTransferContactResponse(intent) {
 }
 
 
-
-// ============ 1:1 채팅상담 이용범위 안내 ============
-// 주의: 이 문구는 사용자에게 보낸 메시지처럼 채팅창에 그대로 보입니다(action:'message' 특성).
-// 그리고 오픈빌더에 이미 등록된 발화/블록명과 절대 겹치면 안 됩니다 — 겹치면 카카오가
-// 폴백 스킬을 거치지 않고 그 기존 블록으로 먼저 매칭시켜 버립니다. 배포 전 오픈빌더에서
-// 아래 문구와 동일한 발화/블록이 이미 있는지 반드시 확인하세요.
-const ONE_TO_ONE_NOTICE_TRIGGER = '1:1상담 이용범위 안내';
-
-function kakaoOneToOneNoticeResponse(blocks) {
-  const chatBlock = blocks.find(b => (b.title || '').trim() === '일대일 채팅 상담 안내');
-  const chatBlockId = getKakaoBlockId(chatBlock);
-  const buttons = [
-    {
-      label: '국민신문고 바로가기',
-      action: 'webLink',
-      webLinkUrl: 'https://www.epeople.go.kr/index.jsp'
-    }
-  ];
-
-  if (chatBlockId) {
-    buttons.push({
-      label: '단순 문의 1:1 상담',
-      action: 'block',
-      blockId: chatBlockId,
-      messageText: '1:1 채팅상담'
-    });
-  }
-
-  return {
-    version: '2.0',
-    template: {
-      outputs: [
-        { simpleText: { text: '1:1 채팅은 교육 관련 단순 질의·이용 안내를 위한 상담 서비스입니다.\n학교·교직원 관련 민원 및 신고, 사실관계 확인, 적정성 판단, 조사·조치가 필요한 사항은 상담하지 않습니다.\n공식적인 민원 처리가 필요한 경우 국민신문고를 이용해 주세요.' } },
-        {
-          basicCard: {
-            title: '상담 이용 안내',
-            description: '민원·신고 또는 조사·조치가 필요한 사항은 국민신문고를 이용해 주세요.',
-            buttons
-          }
-        }
-      ]
-    }
-  };
-}
-
-// ============ 첫인사(웰컴 블록) 이용범위 안내 ============
-// 오픈빌더 "챗봇 이용 안내" 웰컴 블록의 스킬 파라미터/버튼 messageText를
-// 이 트리거 문구로 설정하면, 첫 화면에서도 1:1 상담과 동일한 이용범위 고지가 먼저 노출됩니다.
-// 마찬가지로 오픈빌더에 이미 등록된 발화/블록명과 겹치지 않는지 배포 전 반드시 확인하세요.
-const WELCOME_NOTICE_TRIGGER = '챗봇 이용범위 안내 보기';
-
-function kakaoWelcomeNoticeResponse(blocks) {
-  const welcomeBlock = blocks.find(b => (b.title || '').trim() === '챗봇 이용 안내');
-  const quickReplies = welcomeBlock ? buildBlockQuickReplies(welcomeBlock, blocks) : [];
-
-  return {
-    version: '2.0',
-    template: {
-      outputs: [
-        { simpleText: { text: '안녕하세요! 경상남도교육청 민원 챗봇입니다🤗\n교육 관련 궁금한 점을 간단히 안내해 드려요.' } },
-        {
-          basicCard: {
-            title: '이용범위 안내',
-            description: '이 챗봇과 1:1 채팅은 교육 관련 단순 질의·이용 안내만 가능합니다.\n학교·교직원 관련 민원 및 신고, 사실관계 확인, 적정성 판단, 조사·조치가 필요한 사항은 국민신문고를 이용해 주세요.',
-            buttons: [
-              { label: '국민신문고 바로가기', action: 'webLink', webLinkUrl: 'https://www.epeople.go.kr/index.jsp' }
-            ]
-          }
-        }
-      ],
-      quickReplies: quickReplies.slice(0, 10)
-    }
-  };
-}
-
 // ============ 경상남도교육청 본청 업무담당자 실시간 검색 ============
 // 경남교육청이 제공하는 공식 "업무검색" 페이지의 검색 폼을 그대로 이용합니다.
 // 유료 AI API를 사용하지 않으며, 담당업무/전화번호를 server.js에 고정하지 않습니다.
@@ -2044,18 +1969,30 @@ async function kakaoHqContactResponse(intent) {
     const text = kakaoHqContactResponseText(query, contacts);
     const outputs = [{ simpleText: { text } }];
 
-    // 결과가 정확히 1건일 때만 바로 전화 버튼을 제공합니다.
-    if (contacts.length === 1) {
-      const callable = firstCallablePhone(contacts[0].phone);
-      if (callable) {
-        outputs.push({
-          basicCard: {
-            title: `${contacts[0].department}${contacts[0].team ? ` / ${contacts[0].team}` : ''}`,
-            description: truncateOfficialDuty(contacts[0].duty, 180),
-            buttons: [{ label: '☎ 담당자 전화', action: 'phone', phoneNumber: callable.replace(/-/g, '') }]
-          }
-        });
-      }
+    // 상위 3건까지는 담당자별로 바로 전화 버튼을 제공합니다.
+    // (기존에는 검색 결과가 정확히 1건일 때만 전화 버튼을 제공했고,
+    //  2~3건이 함께 나오면 텍스트로만 번호가 안내되어 사용자가 직접 눌러 걸 수 없었습니다.
+    //  실제 문의(전입학·학교폭력 등)는 부서가 2~3곳으로 나뉘어 나오는 경우가 많아
+    //  설문에서 '담당부서·문의처 연결'이 가장 큰 불편사항(24%)으로 나타난 원인 중 하나로 보고 확장합니다.)
+    const cardTargets = (contacts || []).slice(0, 3);
+    const cards = cardTargets
+      .map(c => {
+        const callable = firstCallablePhone(c.phone);
+        if (!callable) return null;
+        return {
+          title: `${c.department}${c.team ? ` / ${c.team}` : ''}`,
+          description: truncateOfficialDuty(c.duty, 180),
+          buttons: [{ label: '☎ 담당자 전화', action: 'phone', phoneNumber: callable.replace(/-/g, '') }]
+        };
+      })
+      .filter(Boolean);
+
+    if (cards.length === 1) {
+      // 카드가 1장뿐이면 캐로셀 없이 기존과 동일하게 basicCard 하나로 보여줍니다.
+      outputs.push({ basicCard: cards[0] });
+    } else if (cards.length > 1) {
+      // 2장 이상이면 옆으로 넘겨볼 수 있는 캐로셀로 묶어서, 부서별로 각각 전화 버튼을 제공합니다.
+      outputs.push({ carousel: { type: 'basicCard', items: cards } });
     }
 
     return { version: '2.0', template: { outputs } };
@@ -2525,9 +2462,87 @@ function kakaoTransferSchoolLevelResponse(blocks) {
   };
 }
 
+const ONE_TO_ONE_INFO_TEXT = `1:1 상담 요청 (●'◡'●)
+
+상담원 연결을 원하시면 아래의 ‘상담원 연결’ 버튼을 누른 후 문의 내용을 남겨주세요.
+
+담당자가 문의 내용을 확인하여 답변드리며, 1차 상담으로 해결이 어려운 경우에는 소관 업무 담당자의 연락처를 안내해 드립니다. 😊
+
+⚠️ 1:1 채팅은 교육 관련 단순 질의·이용 안내만 가능해요. 학교·교직원 관련 민원·신고, 조사·조치가 필요한 사항은 국민신문고를 이용해 주세요.
+
+📌 1:1 채팅상담 운영시간
+평일 09:00~18:00
+※ 점심시간 12:00~13:00 제외
+
+📌 경남교육콜센터 전화상담
+평일 09:00~18:00
+점심시간에도 상담 가능합니다.
+(☎ 055-268-1004)`;
+
+function isOneToOneRequestText(value) {
+  const q = compactText(value || '');
+  return /^(1:1|1대1|일대일)(상담|채팅|채팅상담|상담요청|요청)?$/.test(q) ||
+    q === '1:1채팅상담' || q === '1:1상담요청' || q === '일대일채팅상담' || q === '일대일상담요청';
+}
+
+function isOneToOneScopeGuideLabel(value) {
+  const q = compactText(value || '');
+  return /(1:1|1대1|일대일).*이용범위.*안내/.test(q);
+}
+
+function getOneToOneInfoBlock(blocks) {
+  return blocks.find(b => (b.title || '').trim() === '일대일 채팅 상담 안내') || null;
+}
+
+function makeOneToOneBlockQuickReply(blocks, label = '1:1 채팅상담') {
+  const target = getOneToOneInfoBlock(blocks);
+  if (target) {
+    const item = makeKakaoQuickReply(target);
+    item.label = String(label || '1:1 채팅상담').slice(0, 20);
+    item.messageText = '1:1 채팅상담';
+    return item;
+  }
+  return { label: String(label || '1:1 채팅상담').slice(0, 20), action: 'message', messageText: '1:1 채팅상담' };
+}
+
+function kakaoOneToOneInfoResponse(blocks) {
+  const chatBlock = getOneToOneInfoBlock(blocks);
+  const chatBlockId = getKakaoBlockId(chatBlock);
+  const buttons = [];
+
+  if (chatBlockId) {
+    buttons.push({
+      label: '상담원 연결',
+      action: 'block',
+      blockId: chatBlockId,
+      messageText: '1:1 채팅상담'
+    });
+  }
+  buttons.push({
+    label: '☎ 경남교육콜센터',
+    action: 'phone',
+    phoneNumber: '0552681004'
+  });
+
+  return {
+    version: '2.0',
+    template: {
+      outputs: [{ textCard: { text: ONE_TO_ONE_INFO_TEXT, buttons: buttons.slice(0, 3) } }],
+      quickReplies: []
+    }
+  };
+}
+
 function buildBlockQuickReplies(block, blocks) {
   const out = [];
   (block.quick_replies || []).forEach(qr => {
+    // '1:1상담 이용범위 안내' 같은 중간 안내 버튼은 노출하지 않고,
+    // 1:1 상담 요청 버튼은 실제 '일대일 채팅 상담 안내' 블록으로 직접 연결합니다.
+    if (isOneToOneScopeGuideLabel(qr.label)) return;
+    if (isOneToOneRequestText(qr.label) || isOneToOneRequestText(qr.block)) {
+      out.push(makeOneToOneBlockQuickReply(blocks, qr.label || '1:1 채팅상담'));
+      return;
+    }
     // 이용자에게 보이는 label이 현재 title과 더 잘 맞는 경우가 많아 label을 먼저 확인
     const target = findBlockForKakaoReference(qr.label, blocks) || findBlockForKakaoReference(qr.block, blocks);
     if (target) {
@@ -2540,6 +2555,11 @@ function buildBlockQuickReplies(block, blocks) {
   });
   (block.responses || []).forEach(r => (r.buttons || []).forEach(b => {
     if (b.type !== 'block') return;
+    if (isOneToOneScopeGuideLabel(b.label)) return;
+    if (isOneToOneRequestText(b.label) || isOneToOneRequestText(b.value)) {
+      out.push(makeOneToOneBlockQuickReply(blocks, b.label || '1:1 채팅상담'));
+      return;
+    }
     const target = findBlockForKakaoReference(b.value, blocks) || findBlockForKakaoReference(b.label, blocks);
     if (target) {
       const item = makeKakaoQuickReply(target);
@@ -2569,6 +2589,9 @@ function kakaoFallbackResponse(utterance, blocks, options = {}) {
   // 따라서 웰컴블록에서 제증명·검정고시·전입학 등의 메뉴를 수정하면 폴백에도 자동 반영됩니다.
   const welcomeBlock = blocks.find(b => (b.title || '').trim() === '챗봇 이용 안내');
   let quickReplies = welcomeBlock ? buildBlockQuickReplies(welcomeBlock, blocks) : [];
+  // 폴백 화면에는 별도의 '1:1상담 이용범위 안내' 메뉴를 표시하지 않습니다.
+  // 1:1 상담 버튼은 아래 카드 버튼에서 실제 1:1 안내 블록으로 직접 연결합니다.
+  quickReplies = quickReplies.filter(q => !isOneToOneScopeGuideLabel(q.label));
 
   // 혹시 웰컴블록을 찾지 못하는 예외 상황에서는 기존 질문 인식 불가 안내 블록 메뉴를 사용합니다.
   if (!quickReplies.length) {
@@ -2591,12 +2614,23 @@ function kakaoFallbackResponse(utterance, blocks, options = {}) {
       });
     }
 
-    // 1:1 상담으로 바로 보내지 않고 이용범위/국민신문고 안내를 먼저 보여줍니다.
-    cardButtons.push({
-      label: '1:1 채팅상담',
-      action: 'message',
-      messageText: ONE_TO_ONE_NOTICE_TRIGGER
-    });
+    const chatBlock = blocks.find(b => (b.title || '').trim() === '일대일 채팅 상담 안내');
+    const chatBlockId = getKakaoBlockId(chatBlock);
+    if (chatBlockId) {
+      cardButtons.push({
+        label: '1:1 채팅상담',
+        action: 'block',
+        blockId: chatBlockId,
+        messageText: '1:1 채팅상담'
+      });
+    } else {
+      // 혹시 블록 ID를 찾지 못해도 스킬 전체가 깨지지 않도록 message 방식으로 안전하게 처리
+      cardButtons.push({
+        label: '1:1 채팅상담',
+        action: 'message',
+        messageText: '1:1 채팅상담'
+      });
+    }
 
     cardButtons.push({
       label: '☎경남교육콜센터 전화연결',
@@ -3805,27 +3839,20 @@ app.post('/api/kakao-skill', async (req, res) => {
   const kakaoInteraction = getKakaoInteractionMeta(req.body || {});
   const blocks = getEffectiveUtterances();
 
-  // 첫인사(웰컴 블록)에서도 1:1 상담과 동일하게 이용범위/국민신문고 안내를 먼저 보여줍니다.
-  if (compactText(utterance) === compactText(WELCOME_NOTICE_TRIGGER)) {
-    resetKakaoFailStreak(kakaoUserId);
-    resetKakaoTransferFailStreak(kakaoUserId);
-    trackQuery(utterance, '챗봇 이용 안내(첫인사) - 이용범위 고지', true, 'kakao-welcome-notice', 'kakao:' + kakaoUserId, kakaoInteraction);
-    return res.json(kakaoWelcomeNoticeResponse(blocks));
-  }
-
-  // 1:1 상담 버튼을 누르면 실제 상담 연결 전에 이용범위와 국민신문고를 먼저 안내합니다.
-  if (compactText(utterance) === compactText(ONE_TO_ONE_NOTICE_TRIGGER)) {
-    resetKakaoFailStreak(kakaoUserId);
-    resetKakaoTransferFailStreak(kakaoUserId);
-    trackQuery(utterance, '1:1 상담 이용 안내', true, 'kakao-1to1-notice', 'kakao:' + kakaoUserId, kakaoInteraction);
-    return res.json(kakaoOneToOneNoticeResponse(blocks));
-  }
-
   if (!utterance.trim()) {
     // 스킬이 발화 없이 호출된 경우에도 카카오가 넘긴 블록 흐름은 통계에 남깁니다.
     const blockLabel = kakaoInteraction.currentBlock || kakaoInteraction.lastBlock || kakaoInteraction.referrerBlock || '카카오 블록 호출';
     trackQuery('[블록 호출]', blockLabel, true, 'kakao-block-event', 'kakao:' + kakaoUserId, kakaoInteraction);
     return res.json(withStaffSearchQuickReply(kakaoFallbackResponse('', blocks, { failCount: 0 })));
+  }
+
+  // 1:1 상담 요청이 블록이 아니라 스킬로 들어온 경우에도 블록과 같은 안내문을 보여줍니다.
+  // 별도의 '1:1상담 이용범위 안내' 문구/버튼을 거치지 않고 바로 1:1 안내로 통일합니다.
+  if (isOneToOneRequestText(utterance) || isOneToOneScopeGuideLabel(utterance)) {
+    resetKakaoFailStreak(kakaoUserId);
+    resetKakaoTransferFailStreak(kakaoUserId);
+    trackQuery(utterance, '일대일 채팅 상담 안내', true, 'kakao-one-to-one-help', 'kakao:' + kakaoUserId, kakaoInteraction);
+    return res.json(kakaoOneToOneInfoResponse(blocks));
   }
 
   // 담당자 메뉴 자체를 누른 경우에는 블록 파라미터나 일반 시나리오 매칭보다 먼저 처리합니다.
