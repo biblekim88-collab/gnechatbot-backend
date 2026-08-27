@@ -3081,7 +3081,7 @@ function hl(text,terms){
   html+=esc(raw.slice(pos));
   return html;
 }
-function tel(v){const m=String(v||'').match(/0\d{1,2}-\d{3,4}-\d{4}/);return m?m[0]:'';}
+function tel(v){const m=String(v||'').match(/0\\d{1,2}-\\d{3,4}-\\d{4}/);return m?m[0]:'';}
 function copyPhone(btn,num){
   const doCopy=text=>{
     if(navigator.clipboard&&navigator.clipboard.writeText) return navigator.clipboard.writeText(text);
@@ -3135,7 +3135,7 @@ async function search(){
       const p=tel(c.phone);
       const raw=p.replace(/-/g,'');
       const phone=p
-        ?'<div class="phoneRow"><a class="phone" href="tel:'+raw+'">☎ '+esc(p)+'</a><button type="button" class="copyBtn" onclick="copyPhone(this,\''+raw+'\')">복사</button></div>'
+        ?'<div class="phoneRow"><a class="phone" href="tel:'+raw+'">☎ '+esc(p)+'</a><button type="button" class="copyBtn" onclick="copyPhone(this,\\''+raw+'\\')">복사</button></div>'
         :'<div class="phone">☎ '+esc(c.phone||'')+'</div>';
       return '<div class="result"><div class="dept">'+hl(c.department||'',terms)+(c.team?' / '+hl(c.team,terms):'')+'</div>'+phone+'<div class="duty">'+hl(c.duty||'',terms)+'</div></div>';
     };
