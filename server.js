@@ -2970,7 +2970,9 @@ app.get('/staff-search', (req, res) => {
   #regionBox,#deptBox{display:none;margin-top:12px;padding-top:13px;border-top:1px solid #edf0f2}.region-title,.dept-title{font-size:14px;font-weight:800;margin-bottom:4px}.region-help,.dept-help{font-size:12px;line-height:1.5;color:#777;margin-bottom:10px}
   .regions,.depts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.region-link,.dept-link{display:block;text-decoration:none;text-align:center;border:1px solid #dfe4e8;background:#fff;border-radius:10px;padding:10px 7px;color:#222;font-size:13px;font-weight:700;cursor:pointer}.dept-count{display:block;font-size:11px;color:#888;font-weight:500;margin-top:2px}
   #status{font-size:14px;color:#666;margin:16px 2px 8px}.result{background:#fff;border-radius:14px;padding:15px 16px;margin-top:10px;box-shadow:0 1px 8px rgba(0,0,0,.05)}
-  .dept{font-weight:800;font-size:16px;margin-bottom:6px}.phone{display:inline-block;margin:2px 0 8px;font-weight:700;color:#1b5dbf;text-decoration:none}.duty{font-size:14px;line-height:1.55;white-space:pre-wrap;color:#444}
+  .dept{font-weight:800;font-size:16px;margin-bottom:6px}.phone{display:inline-block;font-weight:700;color:#1b5dbf;text-decoration:none}.duty{font-size:14px;line-height:1.55;white-space:pre-wrap;color:#444}
+  .phoneRow{display:flex;align-items:center;gap:8px;margin:2px 0 8px}.copyBtn{border:1px solid #cfd6dd;background:#fff;border-radius:8px;padding:3px 10px;font-size:12px;color:#444;cursor:pointer}
+  .kakaoNotice{display:none;background:#fff3cd;border:1px solid #ffe08a;border-radius:12px;padding:10px 12px;font-size:13px;line-height:1.55;color:#664d03;margin-bottom:14px}
   .hl{color:#1b5dbf;font-weight:800}
   .clarify{background:#fff7cc;border:1px solid #ffe36b;border-radius:14px;padding:14px 15px;margin-top:10px;line-height:1.55}.clarify-title{font-weight:800;margin-bottom:4px}.group{margin-top:14px}.group-title{font-size:16px;font-weight:800;margin:0 0 8px}.group-desc{font-size:13px;color:#666;margin:-3px 0 8px}.group .result{margin-top:8px;border:1px solid #eef1f4;box-shadow:none}
   .notice{font-size:12px;line-height:1.55;color:#777;margin-top:16px}.empty{background:#fff;border-radius:14px;padding:18px;margin-top:10px;color:#555}
@@ -2983,6 +2985,7 @@ app.get('/staff-search', (req, res) => {
     <h1>본청 업무담당자 검색</h1>
     <div class="sub">찾으시는 <b>업무명만</b> 입력해 주세요. ‘담당자’라고 붙이지 않아도 됩니다.<br>경상남도교육청 <b>본청</b> 공식 업무분장 정보를 기준으로 검색합니다.</div>
     <div class="scope"><b>지역 업무는 별도 확인이 필요합니다.</b><br>초·중학교 전입학, 학원·교습소 등 지역교육지원청 담당 업무는 아래 <b>지역교육청 안내</b>에서 해당 교육지원청 누리집의 업무분장을 확인해 주세요.</div>
+    <div id="kakaoNotice" class="kakaoNotice">📱 카카오톡 안에서는 전화 버튼이 바로 안 걸릴 수 있어요. 번호를 <b>길게 눌러 전화 걸기</b>를 선택하거나, 번호 옆 <b>복사</b> 버튼으로 복사한 뒤 전화 앱에 붙여넣어 주세요. (우측 상단 ‘⋯’ &gt; 다른 브라우저로 열기도 가능해요)</div>
     <div class="search">
       <input id="q" type="search" placeholder="예: 다자녀" autocomplete="off">
       <button id="btn" type="button">검색</button>
@@ -3079,6 +3082,26 @@ function hl(text,terms){
   return html;
 }
 function tel(v){const m=String(v||'').match(/0\d{1,2}-\d{3,4}-\d{4}/);return m?m[0]:'';}
+function copyPhone(btn,num){
+  const doCopy=text=>{
+    if(navigator.clipboard&&navigator.clipboard.writeText) return navigator.clipboard.writeText(text);
+    const ta=document.createElement('textarea');
+    ta.value=text; ta.style.position='fixed'; ta.style.opacity='0';
+    document.body.appendChild(ta); ta.focus(); ta.select();
+    try{document.execCommand('copy');}catch(_){}
+    document.body.removeChild(ta);
+    return Promise.resolve();
+  };
+  doCopy(num).then(()=>{
+    const old=btn.textContent; btn.textContent='복사됨!';
+    setTimeout(()=>{btn.textContent=old;},1300);
+  }).catch(()=>{});
+}
+// 카카오톡 인앱브라우저는 tel: 링크를 막는 경우가 있어, 번호 복사/길게 누르기 안내를 보여줍니다.
+if(/KAKAOTALK/i.test(navigator.userAgent)){
+  const notice=document.getElementById('kakaoNotice');
+  if(notice) notice.style.display='block';
+}
 function setRegion(open){regionBox.style.display=open?'block':'none';regionToggle.textContent=open?'🏫 지역교육청 안내 닫기':'🏫 지역교육청 안내 보기';}
 function setDept(open){deptBox.style.display=open?'block':'none';deptToggle.textContent=open?'🏢 본청 부서 닫기':'🏢 본청 부서 보기';}
 regionToggle.addEventListener('click',()=>{setDept(false);setRegion(regionBox.style.display!=='block');});
@@ -3109,7 +3132,11 @@ async function search(){
     if(!r.ok||!d.ok) throw new Error(d.message||'검색에 실패했습니다.');
     // 검색어가 여러 단어이면 각 단어를 독립적으로 강조합니다.\n    // 예: '고등학교 전입학' → 결과 문장 안에서 두 단어가 서로 떨어져 있어도 각각 파란색 표시\n    const terms=(query.match(/[가-힣A-Za-z0-9]+/g)||[]).map(x=>x.trim()).filter(Boolean);
     const renderContact=c=>{
-      const p=tel(c.phone), phone=p?'<a class="phone" href="tel:'+p.replace(/-/g,'')+'">☎ '+esc(p)+'</a>':'<div class="phone">☎ '+esc(c.phone||'')+'</div>';
+      const p=tel(c.phone);
+      const raw=p.replace(/-/g,'');
+      const phone=p
+        ?'<div class="phoneRow"><a class="phone" href="tel:'+raw+'">☎ '+esc(p)+'</a><button type="button" class="copyBtn" onclick="copyPhone(this,\''+raw+'\')">복사</button></div>'
+        :'<div class="phone">☎ '+esc(c.phone||'')+'</div>';
       return '<div class="result"><div class="dept">'+hl(c.department||'',terms)+(c.team?' / '+hl(c.team,terms):'')+'</div>'+phone+'<div class="duty">'+hl(c.duty||'',terms)+'</div></div>';
     };
     if(d.disambiguation==='construction'){
