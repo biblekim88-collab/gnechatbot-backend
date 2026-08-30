@@ -1969,25 +1969,19 @@ async function kakaoHqContactResponse(intent) {
     const text = kakaoHqContactResponseText(query, contacts);
     const outputs = [{ simpleText: { text } }];
 
-    // 검색 결과가 여러 건이어도 각 담당자별 전화 버튼을 제공합니다.
-    // 카카오 응답이 너무 길어지지 않도록 최대 3건까지만 카드로 표시합니다.
-    (contacts || []).slice(0, 3).forEach((contact) => {
-      const callable = firstCallablePhone(contact.phone);
-      if (!callable) return;
-      outputs.push({
-        basicCard: {
-          title: `${contact.department}${contact.team ? ` / ${contact.team}` : ''}`,
-          description: truncateOfficialDuty(contact.duty, 180),
-          buttons: [
-            {
-              label: `☎ ${callable}`,
-              action: 'phone',
-              phoneNumber: callable.replace(/-/g, '')
-            }
-          ]
-        }
-      });
-    });
+    // 결과가 정확히 1건일 때만 바로 전화 버튼을 제공합니다.
+    if (contacts.length === 1) {
+      const callable = firstCallablePhone(contacts[0].phone);
+      if (callable) {
+        outputs.push({
+          basicCard: {
+            title: `${contacts[0].department}${contacts[0].team ? ` / ${contacts[0].team}` : ''}`,
+            description: truncateOfficialDuty(contacts[0].duty, 180),
+            buttons: [{ label: '☎ 담당자 전화', action: 'phone', phoneNumber: callable.replace(/-/g, '') }]
+          }
+        });
+      }
+    }
 
     return { version: '2.0', template: { outputs } };
   } catch (err) {
@@ -2936,8 +2930,6 @@ app.get('/staff-search', (req, res) => {
   .regions,.depts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.region-link,.dept-link{display:block;text-decoration:none;text-align:center;border:1px solid #dfe4e8;background:#fff;border-radius:10px;padding:10px 7px;color:#222;font-size:13px;font-weight:700;cursor:pointer}.dept-count{display:block;font-size:11px;color:#888;font-weight:500;margin-top:2px}
   #status{font-size:14px;color:#666;margin:16px 2px 8px}.result{background:#fff;border-radius:14px;padding:15px 16px;margin-top:10px;box-shadow:0 1px 8px rgba(0,0,0,.05)}
   .dept{font-weight:800;font-size:16px;margin-bottom:6px}.phone{display:inline-block;margin:2px 0 8px;font-weight:700;color:#1b5dbf;text-decoration:none}
-  .phone-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:3px 0 9px}.phone-number{font-weight:800;color:#1b5dbf}
-  .call-btn{display:inline-flex;align-items:center;justify-content:center;background:#fee500;color:#191919!important;text-decoration:none!important;font-weight:900;border-radius:9px;padding:7px 11px;min-height:36px;cursor:pointer;-webkit-tap-highlight-color:rgba(0,0,0,.08)}
   .duty{font-size:14px;line-height:1.55;white-space:pre-wrap;color:#444}
   .hl{color:#1b5dbf;font-weight:800}
   .clarify{background:#fff7cc;border:1px solid #ffe36b;border-radius:14px;padding:14px 15px;margin-top:10px;line-height:1.55}.clarify-title{font-weight:800;margin-bottom:4px}.group{margin-top:14px}.group-title{font-size:16px;font-weight:800;margin:0 0 8px}.group-desc{font-size:13px;color:#666;margin:-3px 0 8px}.group .result{margin-top:8px;border:1px solid #eef1f4;box-shadow:none}
@@ -3046,17 +3038,7 @@ function hl(text,terms){
   html+=esc(raw.slice(pos));
   return html;
 }
-function tel(v){
-  const raw=String(v||'').trim().replace(/[()]/g,'-').replace(/\s+/g,'-').replace(/-+/g,'-');
-  let m=raw.match(/0\d{1,2}-\d{3,4}-\d{4}/);
-  if(m) return m[0];
-  m=raw.match(/(?:210|268|278)-\d{4}/);
-  if(m) return '055-'+m[0];
-  const digits=raw.replace(/\D/g,'');
-  if(/^055(?:210|268|278)\d{4}$/.test(digits))
-    return digits.replace(/^(055)(\d{3})(\d{4})$/,'$1-$2-$3');
-  return '';
-}
+function tel(v){const m=String(v||'').match(/0\d{1,2}-\d{3,4}-\d{4}/);return m?m[0]:'';}
 function setRegion(open){regionBox.style.display=open?'block':'none';regionToggle.textContent=open?'🏫 지역교육청 안내 닫기':'🏫 지역교육청 안내 보기';}
 function setDept(open){deptBox.style.display=open?'block':'none';deptToggle.textContent=open?'🏢 본청 부서 닫기':'🏢 본청 부서 보기';}
 regionToggle.addEventListener('click',()=>{setDept(false);setRegion(regionBox.style.display!=='block');});
@@ -3087,11 +3069,7 @@ async function search(){
     if(!r.ok||!d.ok) throw new Error(d.message||'검색에 실패했습니다.');
     // 검색어가 여러 단어이면 각 단어를 독립적으로 강조합니다.\n    // 예: '고등학교 전입학' → 결과 문장 안에서 두 단어가 서로 떨어져 있어도 각각 파란색 표시\n    const terms=(query.match(/[가-힣A-Za-z0-9]+/g)||[]).map(x=>x.trim()).filter(Boolean);
     const renderContact=c=>{
-      const p=tel(c.phone);
-      const dial=p?p.replace(/[^0-9+]/g,''):'';
-      const phone=p
-        ? '<div class="phone-row"><span class="phone-number">☎ '+esc(p)+'</span><a class="call-btn" href="tel:'+dial+'" data-tel="'+dial+'" role="button">📞 전화걸기</a></div>'
-        : '<div class="phone">☎ '+esc(c.phone||'')+'</div>';
+      const p=tel(c.phone), phone=p?'<a class="phone" href="tel:'+p.replace(/-/g,'')+'">☎ '+esc(p)+'</a>':'<div class="phone">☎ '+esc(c.phone||'')+'</div>';
       return '<div class="result"><div class="dept">'+hl(c.department||'',terms)+(c.team?' / '+hl(c.team,terms):'')+'</div>'+phone+'<div class="duty">'+hl(c.duty||'',terms)+'</div></div>';
     };
     if(d.disambiguation==='construction'){
@@ -3117,14 +3095,6 @@ btn.addEventListener('click',search); q.addEventListener('keydown',e=>{if(e.key=
 document.querySelectorAll('.chip').forEach(b=>b.addEventListener('click',()=>{q.value=b.dataset.q||'';search();}));
 if(presetQuery) setTimeout(search,60);
 
-document.addEventListener('click',function(e){
-  const a=e.target.closest&&e.target.closest('.call-btn');
-  if(!a) return;
-  const n=a.getAttribute('data-tel')||'';
-  if(!n) return;
-  // 카카오 인앱브라우저를 포함해 tel 스킴을 직접 호출합니다.
-  try{ window.location.href='tel:'+n; }catch(_){}
-});
 
 </script>
 
