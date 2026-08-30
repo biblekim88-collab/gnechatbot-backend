@@ -2569,6 +2569,63 @@ function kakaoFallbackResponse(utterance, blocks, options = {}) {
 }
 
 
+
+// 질문 내용에 따라 민원 통합안내 웹페이지 바로가기 버튼을 자동으로 붙입니다.
+function withGuideQuickReply(payload, utterance) {
+  if (!payload || !payload.template) return payload;
+
+  const q = String(utterance || '').trim();
+  if (!q) return payload;
+
+  let guide = null;
+
+  // 구체적인 증명서 질문은 제증명 안내를 우선합니다.
+  if (/(제증명|증명서|생활기록부|생기부|졸업증명|성적증명|재학증명|경력증명|재직증명|퇴직증명|폐교.*증명)/i.test(q)) {
+    guide = {
+      label: '📄 증명서 발급 전체 안내',
+      url: `${PUBLIC_BASE_URL}/certificates`
+    };
+  } else if (/(검정고시)/i.test(q)) {
+    guide = {
+      label: '✏️ 검정고시 전체 안내',
+      url: `${PUBLIC_BASE_URL}/ged`
+    };
+  } else if (/(수능|대학수학능력시험|수학능력시험)/i.test(q)) {
+    guide = {
+      label: '🎓 수능 전체 안내',
+      url: `${PUBLIC_BASE_URL}/csat`
+    };
+  } else if (/(전학|전입학|전입|편입학|편입)/i.test(q)) {
+    guide = {
+      label: '🏫 전·입학 전체 안내',
+      url: `${PUBLIC_BASE_URL}/transfer`
+    };
+  }
+
+  if (!guide) return payload;
+
+  const quickReplies = Array.isArray(payload.template.quickReplies)
+    ? payload.template.quickReplies.slice()
+    : [];
+
+  const exists = quickReplies.some(x =>
+    String((x && x.webLinkUrl) || '') === guide.url ||
+    String((x && x.label) || '') === guide.label
+  );
+
+  if (!exists) {
+    // 자동 안내 버튼은 잘 보이도록 첫 번째에 둡니다.
+    quickReplies.unshift({
+      label: guide.label,
+      action: 'webLink',
+      webLinkUrl: guide.url
+    });
+  }
+
+  payload.template.quickReplies = quickReplies.slice(0, 10);
+  return payload;
+}
+
 function withStaffSearchQuickReply(payload) {
   if (!payload || !payload.template) return payload;
 
@@ -3737,6 +3794,10 @@ app.get('/api/official-search', async (req, res) => {
 // 3) AI 비활성/오류 -> 기존 폴백 + 추천 버튼
 app.post('/api/kakao-skill', async (req, res) => {
   const utterance = (req.body && req.body.userRequest && req.body.userRequest.utterance) || '';
+
+  // 이 라우트에서 반환되는 모든 카카오 응답에 질문별 통합안내 버튼을 자동 적용합니다.
+  const originalJson = res.json.bind(res);
+  res.json = (payload) => originalJson(withGuideQuickReply(payload, utterance));
   const kakaoUserId = (req.body && req.body.userRequest && req.body.userRequest.user && req.body.userRequest.user.id) || '';
   const kakaoInteraction = getKakaoInteractionMeta(req.body || {});
   const blocks = getEffectiveUtterances();
@@ -5142,10 +5203,12 @@ app.get('/transfer', (req,res) => {
  const body = `
  <section id="elementary"><h2>초등학교 전학</h2>
  <details open><summary>초등학교 전학은 어떻게 하나요?</summary><div class="answer">거주지를 이전한 뒤 지역 주민센터(읍·면·동)에 전입신고를 하고 <b>초등학교 배정 신청</b>을 합니다. 배정과 통학구역은 주소지를 기준으로 확인합니다.</div></details>
- <details><summary>어느 학교로 배정되는지 알고 싶어요.</summary><div class="answer">초등학교는 통학구역에 따라 배정되므로 주소지의 학구를 확인해야 합니다. 경남교육청 전입학 안내의 <b>학구도 안내</b>에서 확인할 수 있습니다.</div></details>
+ <details><summary>어느 학교로 배정되는지 알고 싶어요.</summary><div class="answer">초등학교는 통학구역에 따라 배정되므로 주소지의 학구를 확인해야 합니다. 아래 <b>학구도 안내</b>에서 주소지별 통학구역을 확인해 주세요.
+<div class="buttons"><a class="btn" href="https://schoolzone.emac.kr/" target="_blank" rel="noopener">🗺️ 학구도 바로가기</a></div></div></details>
  </section>
  <section id="middle"><h2>중학교 전학</h2>
- <details open><summary>중학교 전학은 어디에 신청하나요?</summary><div class="answer"><b>주소지 관할 교육지원청</b>에서 배정합니다. 지역별 전입학 담당부서와 전화번호는 경남교육청 전입학 안내에서 확인할 수 있습니다.</div></details>
+ <details open><summary>중학교 전학은 어디에 신청하나요?</summary><div class="answer"><b>주소지 관할 교육지원청</b>에서 배정합니다. 지역별 전입학 담당부서와 전화번호는 경남교육청 전입학 안내에서 확인할 수 있습니다.
+<div class="buttons"><a class="btn" href="https://www.gne.go.kr/www/chamyeo/admission/emschool.jsp" target="_blank" rel="noopener">📞 지역별 담당자 확인</a></div></div></details>
  <details><summary>다른 시·군으로 이사하는 경우도 같나요?</summary><div class="answer">전입할 주소지의 관할 교육지원청에 배정 절차와 필요서류를 확인하는 것이 가장 정확합니다.</div></details>
  </section>
  <section id="high"><h2>고등학교 전학</h2>
