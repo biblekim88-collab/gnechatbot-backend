@@ -5078,6 +5078,107 @@ function startRenderKeepWarm() {
 
 // ---- 교육 제증명 통합 안내 페이지 ----
 // 카카오 챗봇의 '증명서 발급(제증명)' 메뉴에서 이 페이지로 연결할 수 있습니다.
+
+
+app.get('/', (req, res) => {
+  res.send('경상남도교육청 민원 챗봇 백엔드가 정상적으로 실행 중입니다.');
+});
+
+async function startServer() {
+  // 서버가 외부 요청을 받기 전에 Supabase에 저장된 통계/학습 데이터를 먼저 복구합니다.
+  await initSupabasePersistence();
+
+  
+// ===== 민원 통합안내 추가 페이지: 전·입학 / 검정고시 / 수능 =====
+function gneGuidePage({title, subtitle, accent, tabs, body, sourceUrl, sourceLabel}) {
+  const tabHtml = tabs.map(t => `<a class="chip" href="#${t.id}">${t.label}</a>`).join('');
+  return `<!doctype html><html lang="ko"><head><meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>${title} | 경상남도교육청 민원안내</title>
+  <style>
+  *{box-sizing:border-box}body{margin:0;background:#f5f7fb;color:#172033;font-family:-apple-system,BlinkMacSystemFont,"Noto Sans KR","Malgun Gothic",sans-serif;line-height:1.65}
+  .wrap{max-width:920px;margin:auto;padding:24px 16px 64px}.hero{background:white;border-radius:24px;padding:28px;box-shadow:0 8px 30px rgba(30,45,80,.08);border-top:6px solid ${accent}}
+  h1{font-size:28px;margin:0 0 8px}.sub{color:#59657a}
+  .official{margin-top:18px;background:linear-gradient(135deg,${accent},#263f78);border-radius:18px;padding:18px;color:white;box-shadow:0 8px 22px rgba(35,55,95,.18)}
+  .official strong{font-size:18px;display:block;margin-bottom:4px}.official span{font-size:14px;opacity:.94}
+  .official a{display:inline-block;margin-top:12px;background:white;color:#1f2a44!important;text-decoration:none;font-weight:900;padding:11px 15px;border-radius:12px}
+  .searchbox{margin-top:16px;background:#f8faff;border:1px solid #dfe6f2;border-radius:16px;padding:14px}
+  .searchbox label{display:block;font-weight:900;margin-bottom:8px}
+  .searchrow{display:flex;gap:8px}.searchrow input{flex:1;min-width:0;border:1px solid #cfd8e6;border-radius:12px;padding:13px 14px;font-size:16px;outline:none}
+  .searchrow input:focus{border-color:${accent};box-shadow:0 0 0 3px rgba(70,90,170,.12)}
+  .searchcount{font-size:13px;color:#6b778c;margin-top:7px}
+  .content-layout{display:block;margin-top:16px}
+  .faq-sidebar{position:fixed;top:110px;left:calc(50% - 650px);width:170px;z-index:20;background:#fff;border-radius:18px;padding:14px;box-shadow:0 8px 28px rgba(30,45,80,.10);border:1px solid #e6eaf1}
+  .sidebar-title{font-weight:900;font-size:16px;margin-bottom:8px;padding:6px 8px 10px;border-bottom:1px solid #e8ecf3}
+  .faq-sidebar a{display:block;text-decoration:none;color:#344054;font-weight:800;padding:10px 9px;border-radius:10px;margin:2px 0}
+  .faq-sidebar a:hover{background:#f1f4f9}
+  .faq-main{min-width:0}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}.chip{padding:9px 13px;border-radius:999px;background:#eef2f8;color:#24324a;text-decoration:none;font-weight:700;font-size:14px}
+  section{background:white;border-radius:20px;padding:22px;margin-top:16px;box-shadow:0 4px 18px rgba(30,45,80,.05)}h2{font-size:21px;margin:0 0 12px}
+  details{border-top:1px solid #e8ecf3;padding:13px 0}details:first-of-type{border-top:0}summary{cursor:pointer;font-weight:800}.answer{padding:10px 2px 2px;color:#39465b}
+  .notice{background:#f7f9fc;border-radius:14px;padding:13px 15px;margin:12px 0}.buttons{display:flex;flex-wrap:wrap;gap:9px;margin-top:14px}
+  .btn{display:inline-block;text-decoration:none;background:${accent};color:white!important;font-weight:800;padding:11px 15px;border-radius:12px}.btn.light{background:#eef2f8;color:#26344b!important}
+  .small{font-size:13px;color:#68758a}.warn{font-weight:800;color:#9a4d00}.step{padding-left:20px}a{color:#2459b8}
+  .hidden-faq{display:none!important}
+  .noresult{display:none;background:white;border-radius:18px;padding:22px;margin-top:16px;text-align:center;color:#667085}
+  @media(max-width:1240px){.faq-sidebar{position:static;width:auto;display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-bottom:14px}.sidebar-title{grid-column:1/-1}.faq-sidebar a{text-align:center;background:#f6f8fb;padding:9px 6px}.faq-main{width:100%}} @media(max-width:720px){.faq-sidebar{grid-template-columns:repeat(2,1fr)}.sidebar-title{grid-column:1/-1}} @media(max-width:520px){h1{font-size:24px}.hero{padding:20px}.official{padding:16px}section{padding:18px}.searchrow{display:block}.searchrow input{width:100%}}
+  </style></head><body><main class="wrap"><div class="hero"><h1>${title}</h1><div class="sub">${subtitle}</div>
+  <div class="official"><strong>📌 공식 안내 확인</strong><span>세부 자격·일정·제출서류는 해당 연도 공식 안내가 가장 정확합니다.</span><br><a href="${sourceUrl}" target="_blank" rel="noopener">🔎 ${sourceLabel}</a></div>
+  <div class="searchbox"><label for="faqSearch">🔍 자주 묻는 질문 검색</label><div class="searchrow"><input id="faqSearch" type="search" placeholder="궁금한 내용을 입력해 보세요. 예: 전학, 대리접수, 시험장소" autocomplete="off"></div><div id="searchCount" class="searchcount">질문 제목과 답변 내용을 바로 검색할 수 있어요.</div></div>
+  <div id="faq-list" class="chips">${tabHtml}</div></div>
+
+  <div class="content-layout">
+    <aside class="faq-sidebar">
+      <div class="sidebar-title">자주 묻는 질문</div>
+      <a href="/guides">전체 보기</a>
+      <a href="/certificates">제증명</a>
+      <a href="/transfer">전·입학</a>
+      <a href="/ged">검정고시</a>
+      <a href="/csat">수능</a>
+    </aside>
+    <div class="faq-main">
+      ${body}
+      <div id="noResult" class="noresult">검색 결과가 없습니다. 다른 단어로 검색해 보세요.</div>
+    </div>
+  </div>
+  </main>
+  <script>
+  (function(){
+    const input=document.getElementById('faqSearch');
+    const count=document.getElementById('searchCount');
+    const noResult=document.getElementById('noResult');
+    const sections=[...document.querySelectorAll('.faq-main > section')];
+    const details=[...document.querySelectorAll('details')];
+    const normalize=s=>String(s||'').toLowerCase().replace(/\s+/g,'');
+    function run(){
+      const q=normalize(input.value);
+      let shown=0;
+      details.forEach(d=>{
+        const hit=!q || normalize(d.textContent).includes(q);
+        d.classList.toggle('hidden-faq',!hit);
+        if(hit){shown++; if(q) d.open=true;}
+        else d.open=false;
+      });
+      sections.forEach(sec=>{
+        const ds=[...sec.querySelectorAll('details')];
+        if(!ds.length) return;
+        const any=ds.some(d=>!d.classList.contains('hidden-faq'));
+        sec.style.display=any?'':'none';
+      });
+      if(!q){
+        count.textContent='질문 제목과 답변 내용을 검색할 수 있어요.';
+        noResult.style.display='none';
+      }else{
+        count.textContent='검색 결과 '+shown+'건';
+        noResult.style.display=shown?'none':'block';
+      }
+    }
+    input.addEventListener('input',run); input.addEventListener('search',run); input.addEventListener('change',run);
+  })();
+  </script>
+  </body></html>`;
+}
+
 app.get('/certificates', (req,res) => {
  const body = `
  <section id="online"><h2>온라인 발급</h2>
@@ -5128,105 +5229,6 @@ app.get('/certificates', (req,res) => {
    sourceLabel:'경남교육청 제증명 발급안내'
  }));
 });
-
-app.get('/', (req, res) => {
-  res.send('경상남도교육청 민원 챗봇 백엔드가 정상적으로 실행 중입니다.');
-});
-
-async function startServer() {
-  // 서버가 외부 요청을 받기 전에 Supabase에 저장된 통계/학습 데이터를 먼저 복구합니다.
-  await initSupabasePersistence();
-
-  
-// ===== 민원 통합안내 추가 페이지: 전·입학 / 검정고시 / 수능 =====
-function gneGuidePage({title, subtitle, accent, tabs, body, sourceUrl, sourceLabel}) {
-  const tabHtml = tabs.map(t => `<a class="chip" href="#${t.id}">${t.label}</a>`).join('');
-  return `<!doctype html><html lang="ko"><head><meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>${title} | 경상남도교육청 민원안내</title>
-  <style>
-  *{box-sizing:border-box}body{margin:0;background:#f5f7fb;color:#172033;font-family:-apple-system,BlinkMacSystemFont,"Noto Sans KR","Malgun Gothic",sans-serif;line-height:1.65}
-  .wrap{max-width:920px;margin:auto;padding:24px 16px 64px}.hero{background:white;border-radius:24px;padding:28px;box-shadow:0 8px 30px rgba(30,45,80,.08);border-top:6px solid ${accent}}
-  h1{font-size:28px;margin:0 0 8px}.sub{color:#59657a}
-  .official{margin-top:18px;background:linear-gradient(135deg,${accent},#263f78);border-radius:18px;padding:18px;color:white;box-shadow:0 8px 22px rgba(35,55,95,.18)}
-  .official strong{font-size:18px;display:block;margin-bottom:4px}.official span{font-size:14px;opacity:.94}
-  .official a{display:inline-block;margin-top:12px;background:white;color:#1f2a44!important;text-decoration:none;font-weight:900;padding:11px 15px;border-radius:12px}
-  .searchbox{margin-top:16px;background:#f8faff;border:1px solid #dfe6f2;border-radius:16px;padding:14px}
-  .searchbox label{display:block;font-weight:900;margin-bottom:8px}
-  .searchrow{display:flex;gap:8px}.searchrow input{flex:1;min-width:0;border:1px solid #cfd8e6;border-radius:12px;padding:13px 14px;font-size:16px;outline:none}
-  .searchrow input:focus{border-color:${accent};box-shadow:0 0 0 3px rgba(70,90,170,.12)}
-  .searchcount{font-size:13px;color:#6b778c;margin-top:7px}
-  .content-layout{display:grid;grid-template-columns:180px minmax(0,1fr);gap:16px;align-items:start;margin-top:16px}
-  .faq-sidebar{position:sticky;top:16px;background:#fff;border-radius:18px;padding:14px;box-shadow:0 4px 18px rgba(30,45,80,.06);border:1px solid #e6eaf1}
-  .sidebar-title{font-weight:900;font-size:16px;margin-bottom:8px;padding:6px 8px 10px;border-bottom:1px solid #e8ecf3}
-  .faq-sidebar a{display:block;text-decoration:none;color:#344054;font-weight:800;padding:10px 9px;border-radius:10px;margin:2px 0}
-  .faq-sidebar a:hover{background:#f1f4f9}
-  .faq-main{min-width:0}
-  .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}.chip{padding:9px 13px;border-radius:999px;background:#eef2f8;color:#24324a;text-decoration:none;font-weight:700;font-size:14px}
-  section{background:white;border-radius:20px;padding:22px;margin-top:16px;box-shadow:0 4px 18px rgba(30,45,80,.05)}h2{font-size:21px;margin:0 0 12px}
-  details{border-top:1px solid #e8ecf3;padding:13px 0}details:first-of-type{border-top:0}summary{cursor:pointer;font-weight:800}.answer{padding:10px 2px 2px;color:#39465b}
-  .notice{background:#f7f9fc;border-radius:14px;padding:13px 15px;margin:12px 0}.buttons{display:flex;flex-wrap:wrap;gap:9px;margin-top:14px}
-  .btn{display:inline-block;text-decoration:none;background:${accent};color:white!important;font-weight:800;padding:11px 15px;border-radius:12px}.btn.light{background:#eef2f8;color:#26344b!important}
-  .small{font-size:13px;color:#68758a}.warn{font-weight:800;color:#9a4d00}.step{padding-left:20px}a{color:#2459b8}
-  .hidden-faq{display:none!important}
-  .noresult{display:none;background:white;border-radius:18px;padding:22px;margin-top:16px;text-align:center;color:#667085}
-  @media(max-width:720px){.content-layout{grid-template-columns:1fr}.faq-sidebar{position:static;display:grid;grid-template-columns:repeat(2,1fr);gap:6px}.sidebar-title{grid-column:1/-1}.faq-sidebar a{text-align:center;background:#f6f8fb}.faq-main{width:100%}} @media(max-width:520px){h1{font-size:24px}.hero{padding:20px}.official{padding:16px}section{padding:18px}.searchrow{display:block}.searchrow input{width:100%}}
-  </style></head><body><main class="wrap"><div class="hero"><h1>${title}</h1><div class="sub">${subtitle}</div>
-  <div class="official"><strong>📌 공식 안내 확인</strong><span>세부 자격·일정·제출서류는 해당 연도 공식 안내가 가장 정확합니다.</span><br><a href="${sourceUrl}" target="_blank" rel="noopener">🔎 ${sourceLabel}</a></div>
-  <div class="searchbox"><label for="faqSearch">🔍 자주 묻는 질문 검색</label><div class="searchrow"><input id="faqSearch" type="search" placeholder="궁금한 내용을 입력해 보세요. 예: 전학, 대리접수, 시험장소" autocomplete="off"></div><div id="searchCount" class="searchcount">질문 제목과 답변 내용을 바로 검색할 수 있어요.</div></div>
-  <div id="faq-list" class="chips">${tabHtml}</div></div>
-
-  <div class="content-layout">
-    <aside class="faq-sidebar">
-      <div class="sidebar-title">자주 묻는 질문</div>
-      <a href="/guides">전체 보기</a>
-      <a href="/certificates">제증명</a>
-      <a href="/transfer">전·입학</a>
-      <a href="/ged">검정고시</a>
-      <a href="/csat">수능</a>
-    </aside>
-    <div class="faq-main">
-      ${body}
-      <div id="noResult" class="noresult">검색 결과가 없습니다. 다른 단어로 검색해 보세요.</div>
-    </div>
-  </div>
-  </main>
-  <script>
-  (function(){
-    const input=document.getElementById('faqSearch');
-    const count=document.getElementById('searchCount');
-    const noResult=document.getElementById('noResult');
-    const sections=[...document.querySelectorAll('main > section')];
-    const details=[...document.querySelectorAll('details')];
-    const normalize=s=>String(s||'').toLowerCase().replace(/\s+/g,'');
-    function run(){
-      const q=normalize(input.value);
-      let shown=0;
-      details.forEach(d=>{
-        const hit=!q || normalize(d.textContent).includes(q);
-        d.classList.toggle('hidden-faq',!hit);
-        if(hit){shown++; if(q) d.open=true;}
-        else d.open=false;
-      });
-      sections.forEach(sec=>{
-        const ds=[...sec.querySelectorAll('details')];
-        if(!ds.length) return;
-        const any=ds.some(d=>!d.classList.contains('hidden-faq'));
-        sec.style.display=any?'':'none';
-      });
-      if(!q){
-        count.textContent='질문 제목과 답변 내용을 검색할 수 있어요.';
-        noResult.style.display='none';
-      }else{
-        count.textContent='검색 결과 '+shown+'건';
-        noResult.style.display=shown?'none':'block';
-      }
-    }
-    input.addEventListener('input',run);
-  })();
-  </script>
-  </body></html>`;
-}
 
 app.get('/transfer', (req,res) => {
  const body = `
