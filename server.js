@@ -1782,8 +1782,8 @@ function kakaoHqContactAskResponse() {
             title: '경상남도교육청 본청 업무담당자',
             description: '본청 업무분장 기준으로 담당자를 찾아드립니다.\n예) 다자녀, 제증명, 고등학교 전입학, 검정고시, 직업교육\n\n※ 초·중학교 전입학, 학원·교습소 등 지역교육지원청 담당 업무는 해당 교육지원청 누리집의 업무분장을 확인해 주세요.',
             buttons: [
-              { label: '🔎 본청 업무담당자 검색', action: 'webLink', webLinkUrl: `${PUBLIC_BASE_URL}/staff-search` },
-              { label: '🏫 지역교육청 안내', action: 'webLink', webLinkUrl: `${PUBLIC_BASE_URL}/staff-search?regional=1` }
+              { label: '🔎 본청 업무담당자 검색', action: 'webLink', webLinkUrl: `${PUBLIC_BASE_URL}/staff-search?v=phonefix3` },
+              { label: '🏫 지역교육청 안내', action: 'webLink', webLinkUrl: `${PUBLIC_BASE_URL}/staff-search?regional=1&v=phonefix3` }
             ]
           }
         }
@@ -2910,6 +2910,9 @@ app.post('/api/track', (req, res) => {
 // 본청 업무담당자 검색용 모바일 페이지
 // 카카오 인앱브라우저에서도 별도 업무 발화 등록 없이 검색할 수 있습니다.
 app.get('/staff-search', (req, res) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
   res.type('html').send(`<!doctype html>
 <html lang="ko">
 <head>
@@ -2935,12 +2938,17 @@ app.get('/staff-search', (req, res) => {
   .clarify{background:#fff7cc;border:1px solid #ffe36b;border-radius:14px;padding:14px 15px;margin-top:10px;line-height:1.55}.clarify-title{font-weight:800;margin-bottom:4px}.group{margin-top:14px}.group-title{font-size:16px;font-weight:800;margin:0 0 8px}.group-desc{font-size:13px;color:#666;margin:-3px 0 8px}.group .result{margin-top:8px;border:1px solid #eef1f4;box-shadow:none}
   .notice{font-size:12px;line-height:1.55;color:#777;margin-top:16px}.empty{background:#fff;border-radius:14px;padding:18px;margin-top:10px;color:#555}
   @media(min-width:560px){.regions,.depts{grid-template-columns:repeat(3,minmax(0,1fr))}}
+.dept{font-weight:800;font-size:16px;margin-bottom:6px}.phone{display:inline-block;margin:2px 0 8px;font-weight:700;color:#1b5dbf;text-decoration:none}
+  .phone-row{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin:3px 0 10px}
+  .phone-number{font-weight:800;color:#1b5dbf}
+  .call-btn{display:inline-flex;align-items:center;justify-content:center;min-height:38px;padding:7px 12px;border-radius:10px;background:#fee500;color:#191919!important;text-decoration:none!important;font-weight:900}
+  .duty
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="card">
-    <h1>본청 업무담당자 검색</h1>
+    <h1>본청 업무담당자 검색</h1><div style="font-size:11px;color:#999;margin-top:-2px;margin-bottom:4px">전화연결 적용 v3</div>
     <div class="sub">찾으시는 <b>업무명만</b> 입력해 주세요. ‘담당자’라고 붙이지 않아도 됩니다.<br>경상남도교육청 <b>본청</b> 공식 업무분장 정보를 기준으로 검색합니다.</div>
     <div class="scope"><b>지역 업무는 별도 확인이 필요합니다.</b><br>초·중학교 전입학, 학원·교습소 등 지역교육지원청 담당 업무는 아래 <b>지역교육청 안내</b>에서 해당 교육지원청 누리집의 업무분장을 확인해 주세요.</div>
     <div class="search">
@@ -3038,7 +3046,12 @@ function hl(text,terms){
   html+=esc(raw.slice(pos));
   return html;
 }
-function tel(v){const m=String(v||'').match(/0\d{1,2}-\d{3,4}-\d{4}/);return m?m[0]:'';}
+function tel(v){
+  const raw=String(v||'').trim();
+  const digits=raw.replace(/[^0-9]/g,'');
+  if(digits.length<9) return '';
+  return digits;
+}
 function setRegion(open){regionBox.style.display=open?'block':'none';regionToggle.textContent=open?'🏫 지역교육청 안내 닫기':'🏫 지역교육청 안내 보기';}
 function setDept(open){deptBox.style.display=open?'block':'none';deptToggle.textContent=open?'🏢 본청 부서 닫기':'🏢 본청 부서 보기';}
 regionToggle.addEventListener('click',()=>{setDept(false);setRegion(regionBox.style.display!=='block');});
@@ -3069,7 +3082,11 @@ async function search(){
     if(!r.ok||!d.ok) throw new Error(d.message||'검색에 실패했습니다.');
     // 검색어가 여러 단어이면 각 단어를 독립적으로 강조합니다.\n    // 예: '고등학교 전입학' → 결과 문장 안에서 두 단어가 서로 떨어져 있어도 각각 파란색 표시\n    const terms=(query.match(/[가-힣A-Za-z0-9]+/g)||[]).map(x=>x.trim()).filter(Boolean);
     const renderContact=c=>{
-      const p=tel(c.phone), phone=p?'<a class="phone" href="tel:'+p.replace(/-/g,'')+'">☎ '+esc(p)+'</a>':'<div class="phone">☎ '+esc(c.phone||'')+'</div>';
+      const dial=tel(c.phone);
+      const phoneText=esc(c.phone||'');
+      const phone=dial
+        ? '<div class="phone-row"><span class="phone-number">☎ '+phoneText+'</span><a class="call-btn" href="tel:'+dial+'">📞 바로 전화걸기</a></div>'
+        : '<div class="phone">☎ '+phoneText+'</div>';
       return '<div class="result"><div class="dept">'+hl(c.department||'',terms)+(c.team?' / '+hl(c.team,terms):'')+'</div>'+phone+'<div class="duty">'+hl(c.duty||'',terms)+'</div></div>';
     };
     if(d.disambiguation==='construction'){
