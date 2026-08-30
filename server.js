@@ -2582,22 +2582,22 @@ function withGuideQuickReply(payload, utterance) {
   // 구체적인 증명서 질문은 제증명 안내를 우선합니다.
   if (/(제증명|증명서|생활기록부|생기부|졸업증명|성적증명|재학증명|경력증명|재직증명|퇴직증명|폐교.*증명)/i.test(q)) {
     guide = {
-      label: '📄 증명서 발급 전체 안내',
+      label: '🔍 증명서 자주 묻는 질문',
       url: `${PUBLIC_BASE_URL}/certificates`
     };
   } else if (/(검정고시)/i.test(q)) {
     guide = {
-      label: '✏️ 검정고시 전체 안내',
+      label: '🔍 검정고시 자주 묻는 질문',
       url: `${PUBLIC_BASE_URL}/ged`
     };
   } else if (/(수능|대학수학능력시험|수학능력시험)/i.test(q)) {
     guide = {
-      label: '🎓 수능 전체 안내',
+      label: '🔍 수능 자주 묻는 질문',
       url: `${PUBLIC_BASE_URL}/csat`
     };
   } else if (/(전학|전입학|전입|편입학|편입)/i.test(q)) {
     guide = {
-      label: '🏫 전·입학 전체 안내',
+      label: '🔍 전·입학 자주 묻는 질문',
       url: `${PUBLIC_BASE_URL}/transfer`
     };
   }
@@ -5099,11 +5099,39 @@ a{color:inherit;text-decoration:none}.wrap{max-width:860px;margin:0 auto;padding
 .actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:20px 0}.btn{border-radius:13px;padding:13px 12px;text-align:center;font-weight:800;border:1px solid #d7c7df;background:#fff;color:#5c2f70}.btn.primary{background:var(--p);color:#fff;border-color:var(--p)}
 .footer{font-size:12px;color:var(--muted);padding:18px 2px}.hidden{display:none!important}
 @media(max-width:600px){.hero h1{font-size:24px}.grid{grid-template-columns:1fr}.actions{grid-template-columns:1fr}.wrap{padding-left:14px;padding-right:14px}}
+
+.cert-search{background:#fff;border:2px solid #cbb2d8;border-radius:17px;padding:15px 16px;margin:0 0 12px;box-shadow:0 4px 16px rgba(30,25,35,.05)}
+.cert-search-title{font-size:17px;font-weight:900;color:#4f2761;margin-bottom:8px}
+.cert-search input{width:100%;border:1px solid #cec6d2;border-radius:12px;padding:13px 14px;font-size:16px;outline:none}
+.cert-search input:focus{border-color:var(--p);box-shadow:0 0 0 3px rgba(111,60,136,.12)}
+.cert-search-count{font-size:12px;color:var(--muted);margin-top:7px}
+.cert-official{background:linear-gradient(135deg,#6f3c88,#8e5aa5);color:#fff;border-radius:17px;padding:16px;margin:0 0 14px;box-shadow:0 6px 18px rgba(74,38,91,.16)}
+.cert-official-title{font-size:17px;font-weight:900;margin-bottom:4px}
+.cert-official a{display:inline-block;margin-top:10px;background:#fff;color:#5c2f70!important;border-radius:11px;padding:10px 13px;font-weight:900}
+.cert-hidden{display:none!important}.cert-noresult{display:none;background:#fff;border:1px solid var(--line);border-radius:15px;padding:18px;text-align:center;color:var(--muted);margin:10px 0}
+
 </style>
 </head>
 <body>
 <header class="hero"><div class="wrap"><div class="eyebrow">경상남도교육청 민원상담 1004챗봇</div><h1>교육 제증명 발급 안내</h1><p>졸업·성적·생활기록부, 검정고시, 교직원 증명서 등 자주 묻는 내용을 한곳에서 확인하세요.</p></div></header>
 <main class="wrap">
+
+  <div class="cert-official">
+    <div class="cert-official-title">📌 공식 발급안내 확인</div>
+    <div>발급방법·구비서류는 경상남도교육청 공식 안내가 가장 정확합니다.</div>
+    <a href="https://www.gne.go.kr/www/minwon/complaints/guide/guide_02.jsp" target="_blank" rel="noopener">🔎 경남교육청 제증명 발급안내</a>
+  </div>
+
+  <div class="cert-search">
+    <div class="cert-search-title">🔍 자주 묻는 질문 검색</div>
+    <input id="certFaqSearch" type="search" placeholder="예: 대리발급, 온라인 발급, 폐교학교, 생활기록부" autocomplete="off">
+    <div id="certSearchCount" class="cert-search-count">질문 제목과 답변 내용을 바로 검색할 수 있어요.</div>
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <a href="/guides" style="flex:1;text-align:center;text-decoration:none;background:#f3f0f5;color:#5c2f70;border-radius:10px;padding:9px;font-weight:900">🏠 자주 묻는 질문 홈</a>
+      <a href="#cert-faq-list" style="flex:1;text-align:center;text-decoration:none;background:#f3f0f5;color:#5c2f70;border-radius:10px;padding:9px;font-weight:900">☰ 질문 목록</a>
+    </div>
+  </div>
+
   <div class="notice"><strong>먼저 확인해 주세요.</strong><br>증명서 종류·졸업연도·전산자료 보유 여부 등에 따라 온라인 발급 가능 여부가 달라질 수 있습니다. 온라인 발급이 어려운 경우 방문·FAX 등 다른 방법을 이용할 수 있습니다.</div>
 
   <div class="chips" aria-label="분야 선택">
@@ -5119,6 +5147,7 @@ a{color:inherit;text-decoration:none}.wrap{max-width:860px;margin:0 auto;padding
 
   <h2 class="section-title">자주 묻는 질문</h2>
 
+  <div id="cert-faq-list"></div>
   <details class="faq" data-cat="student method" id="faq-online" open><summary>학교 관련 증명서는 어디서 발급받을 수 있나요?</summary><div class="answer"><span class="tag">학생</span><span class="tag">발급방법</span><p>졸업증명서, 성적증명서, 재학증명서, 학교생활기록부 등 교육 관련 증명서는 증명서 종류에 따라 <b>정부24 온라인 발급, 방문, FAX, 무인민원발급기 등</b>을 이용할 수 있습니다.</p><p>온라인 발급 가능 여부는 증명서 종류와 전산자료 보유 범위 등에 따라 달라질 수 있으므로, 발급 화면에서 대상 여부를 확인해 주세요.</p></div></details>
 
   <details class="faq" data-cat="student ged staff"><summary>어떤 교육 제증명을 발급받을 수 있나요?</summary><div class="answer"><p><b>학생</b>: 졸업(예정)증명서, 성적증명서, 재학증명서, 학교생활기록부, 제적증명서, 정원외관리증명서, 교육비납입증명서 등</p><p><b>검정고시</b>: 합격증명서, 성적증명서, 과목합격증명서 등</p><p><b>교직원</b>: 재직증명서, 경력증명서, 퇴직증명원, 퇴직예정증명원, 수상확인원, 연수이수확인원, 휴직증명서 등</p><div class="mini">※ 실제 발급 가능 여부와 신청방법은 각 증명서별 안내를 확인해 주세요.</div></div></details>
@@ -5159,6 +5188,35 @@ a{color:inherit;text-decoration:none}.wrap{max-width:860px;margin:0 auto;padding
   </div>
   <div class="notice"><b>정보 최종 확인: 2026. 8. 30.</b><br>이 페이지는 민원인의 이해를 돕기 위한 안내입니다. 방문·대리발급 구비서류는 경상남도교육청 「즉시민원/유기한민원」 안내를 기준으로 작성했습니다. 개별 증명서의 온라인 발급 가능 여부 등은 정부24 또는 접수·처리기관의 최신 안내를 확인해 주세요.</div>
   <div class="footer">경상남도교육청 민원상담 1004챗봇 · 교육 제증명 통합 안내</div>
+
+  <div id="certNoResult" class="cert-noresult">검색 결과가 없습니다. 다른 단어로 검색해 보세요.</div>
+<script>
+(function(){
+  const input=document.getElementById('certFaqSearch');
+  const count=document.getElementById('certSearchCount');
+  const noResult=document.getElementById('certNoResult');
+  const faqs=[...document.querySelectorAll('.faq')];
+  const norm=s=>String(s||'').toLowerCase().replace(/\s+/g,'');
+  function run(){
+    const q=norm(input.value);
+    let shown=0;
+    faqs.forEach(f=>{
+      const hit=!q || norm(f.textContent).includes(q);
+      f.classList.toggle('cert-hidden',!hit);
+      if(hit){shown++; if(q) f.open=true;} else {f.open=false;}
+    });
+    if(!q){
+      count.textContent='질문 제목과 답변 내용을 바로 검색할 수 있어요.';
+      noResult.style.display='none';
+    }else{
+      count.textContent='검색 결과 '+shown+'건';
+      noResult.style.display=shown?'none':'block';
+    }
+  }
+  input.addEventListener('input',run); input.addEventListener('search',run); input.addEventListener('change',run); input.addEventListener('search',run); input.addEventListener('change',run);
+})();
+</script>
+
 </main>
 <script>
 const chips=[...document.querySelectorAll('.chip')], faqs=[...document.querySelectorAll('.faq')];
@@ -5185,18 +5243,68 @@ function gneGuidePage({title, subtitle, accent, tabs, body, sourceUrl, sourceLab
   <style>
   *{box-sizing:border-box}body{margin:0;background:#f5f7fb;color:#172033;font-family:-apple-system,BlinkMacSystemFont,"Noto Sans KR","Malgun Gothic",sans-serif;line-height:1.65}
   .wrap{max-width:920px;margin:auto;padding:24px 16px 64px}.hero{background:white;border-radius:24px;padding:28px;box-shadow:0 8px 30px rgba(30,45,80,.08);border-top:6px solid ${accent}}
-  h1{font-size:28px;margin:0 0 8px}.sub{color:#59657a}.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}.chip{padding:9px 13px;border-radius:999px;background:#eef2f8;color:#24324a;text-decoration:none;font-weight:700;font-size:14px}
+  h1{font-size:28px;margin:0 0 8px}.sub{color:#59657a}
+  .official{margin-top:18px;background:linear-gradient(135deg,${accent},#263f78);border-radius:18px;padding:18px;color:white;box-shadow:0 8px 22px rgba(35,55,95,.18)}
+  .official strong{font-size:18px;display:block;margin-bottom:4px}.official span{font-size:14px;opacity:.94}
+  .official a{display:inline-block;margin-top:12px;background:white;color:#1f2a44!important;text-decoration:none;font-weight:900;padding:11px 15px;border-radius:12px}
+  .searchbox{margin-top:16px;background:#f8faff;border:1px solid #dfe6f2;border-radius:16px;padding:14px}
+  .searchbox label{display:block;font-weight:900;margin-bottom:8px}
+  .searchrow{display:flex;gap:8px}.searchrow input{flex:1;min-width:0;border:1px solid #cfd8e6;border-radius:12px;padding:13px 14px;font-size:16px;outline:none}
+  .searchrow input:focus{border-color:${accent};box-shadow:0 0 0 3px rgba(70,90,170,.12)}
+  .searchcount{font-size:13px;color:#6b778c;margin-top:7px}
+  .faq-nav{display:flex;gap:8px;margin-top:10px}.faq-nav a{flex:1;text-align:center;text-decoration:none;background:#fff;border:1px solid #dfe5ef;border-radius:12px;padding:10px 8px;font-weight:800;color:#344054}.faq-nav a:hover{background:#f3f6fb}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}.chip{padding:9px 13px;border-radius:999px;background:#eef2f8;color:#24324a;text-decoration:none;font-weight:700;font-size:14px}
   section{background:white;border-radius:20px;padding:22px;margin-top:16px;box-shadow:0 4px 18px rgba(30,45,80,.05)}h2{font-size:21px;margin:0 0 12px}
   details{border-top:1px solid #e8ecf3;padding:13px 0}details:first-of-type{border-top:0}summary{cursor:pointer;font-weight:800}.answer{padding:10px 2px 2px;color:#39465b}
   .notice{background:#f7f9fc;border-radius:14px;padding:13px 15px;margin:12px 0}.buttons{display:flex;flex-wrap:wrap;gap:9px;margin-top:14px}
   .btn{display:inline-block;text-decoration:none;background:${accent};color:white!important;font-weight:800;padding:11px 15px;border-radius:12px}.btn.light{background:#eef2f8;color:#26344b!important}
   .small{font-size:13px;color:#68758a}.warn{font-weight:800;color:#9a4d00}.step{padding-left:20px}a{color:#2459b8}
-  @media(max-width:520px){h1{font-size:24px}.hero{padding:22px}section{padding:18px}}
-  </style></head><body><main class="wrap"><div class="hero"><h1>${title}</h1><div class="sub">${subtitle}</div><div class="chips">${tabHtml}</div></div>
+  .hidden-faq{display:none!important}
+  .noresult{display:none;background:white;border-radius:18px;padding:22px;margin-top:16px;text-align:center;color:#667085}
+  @media(max-width:520px){h1{font-size:24px}.hero{padding:20px}.official{padding:16px}section{padding:18px}.searchrow{display:block}.searchrow input{width:100%}}
+  </style></head><body><main class="wrap"><div class="hero"><h1>${title}</h1><div class="sub">${subtitle}</div>
+  <div class="official"><strong>📌 공식 안내 확인</strong><span>세부 자격·일정·제출서류는 해당 연도 공식 안내가 가장 정확합니다.</span><br><a href="${sourceUrl}" target="_blank" rel="noopener">🔎 ${sourceLabel}</a></div>
+  <div class="searchbox"><label for="faqSearch">🔍 자주 묻는 질문 검색</label><div class="searchrow"><input id="faqSearch" type="search" placeholder="궁금한 내용을 입력해 보세요. 예: 전학, 대리접수, 시험장소" autocomplete="off"></div><div id="searchCount" class="searchcount">질문 제목과 답변 내용을 바로 검색할 수 있어요.</div></div>
+  <div class="faq-nav"><a href="/guides">🏠 자주 묻는 질문 홈</a><a href="#faq-list">☰ 질문 목록</a></div>
+  <div id="faq-list" class="chips">${tabHtml}</div></div>
   ${body}
-  <section><h2>공식 안내 확인</h2><p>세부 자격·일정·제출서류는 해당 연도 시행계획과 공식 안내가 우선합니다.</p><div class="buttons">
-  <a class="btn" href="${sourceUrl}" target="_blank" rel="noopener">${sourceLabel}</a><a class="btn light" href="/staff-search">담당부서·문의처 찾기</a></div></section>
-  </main></body></html>`;
+  <div id="noResult" class="noresult">검색 결과가 없습니다. 다른 단어로 검색해 보세요.</div>
+  </main>
+  <script>
+  (function(){
+    const input=document.getElementById('faqSearch');
+    const count=document.getElementById('searchCount');
+    const noResult=document.getElementById('noResult');
+    const sections=[...document.querySelectorAll('main > section')];
+    const details=[...document.querySelectorAll('details')];
+    const normalize=s=>String(s||'').toLowerCase().replace(/\s+/g,'');
+    function run(){
+      const q=normalize(input.value);
+      let shown=0;
+      details.forEach(d=>{
+        const hit=!q || normalize(d.textContent).includes(q);
+        d.classList.toggle('hidden-faq',!hit);
+        if(hit){shown++; if(q) d.open=true;}
+        else d.open=false;
+      });
+      sections.forEach(sec=>{
+        const ds=[...sec.querySelectorAll('details')];
+        if(!ds.length) return;
+        const any=ds.some(d=>!d.classList.contains('hidden-faq'));
+        sec.style.display=any?'':'none';
+      });
+      if(!q){
+        count.textContent='질문 제목과 답변 내용을 검색할 수 있어요.';
+        noResult.style.display='none';
+      }else{
+        count.textContent='검색 결과 '+shown+'건';
+        noResult.style.display=shown?'none':'block';
+      }
+    }
+    input.addEventListener('input',run);
+  })();
+  </script>
+  </body></html>`;
 }
 
 app.get('/transfer', (req,res) => {
