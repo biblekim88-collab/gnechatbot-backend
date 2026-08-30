@@ -5156,7 +5156,12 @@ function gneGuidePage({title, subtitle, accent, tabs, body, sourceUrl, sourceLab
   .searchrow{display:flex;gap:8px}.searchrow input{flex:1;min-width:0;border:1px solid #cfd8e6;border-radius:12px;padding:13px 14px;font-size:16px;outline:none}
   .searchrow input:focus{border-color:${accent};box-shadow:0 0 0 3px rgba(70,90,170,.12)}
   .searchcount{font-size:13px;color:#6b778c;margin-top:7px}
-  .faq-nav{display:flex;gap:8px;margin-top:10px}.faq-nav a{flex:1;text-align:center;text-decoration:none;background:#fff;border:1px solid #dfe5ef;border-radius:12px;padding:10px 8px;font-weight:800;color:#344054}.faq-nav a:hover{background:#f3f6fb}
+  .content-layout{display:grid;grid-template-columns:180px minmax(0,1fr);gap:16px;align-items:start;margin-top:16px}
+  .faq-sidebar{position:sticky;top:16px;background:#fff;border-radius:18px;padding:14px;box-shadow:0 4px 18px rgba(30,45,80,.06);border:1px solid #e6eaf1}
+  .sidebar-title{font-weight:900;font-size:16px;margin-bottom:8px;padding:6px 8px 10px;border-bottom:1px solid #e8ecf3}
+  .faq-sidebar a{display:block;text-decoration:none;color:#344054;font-weight:800;padding:10px 9px;border-radius:10px;margin:2px 0}
+  .faq-sidebar a:hover{background:#f1f4f9}
+  .faq-main{min-width:0}
   .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}.chip{padding:9px 13px;border-radius:999px;background:#eef2f8;color:#24324a;text-decoration:none;font-weight:700;font-size:14px}
   section{background:white;border-radius:20px;padding:22px;margin-top:16px;box-shadow:0 4px 18px rgba(30,45,80,.05)}h2{font-size:21px;margin:0 0 12px}
   details{border-top:1px solid #e8ecf3;padding:13px 0}details:first-of-type{border-top:0}summary{cursor:pointer;font-weight:800}.answer{padding:10px 2px 2px;color:#39465b}
@@ -5165,14 +5170,26 @@ function gneGuidePage({title, subtitle, accent, tabs, body, sourceUrl, sourceLab
   .small{font-size:13px;color:#68758a}.warn{font-weight:800;color:#9a4d00}.step{padding-left:20px}a{color:#2459b8}
   .hidden-faq{display:none!important}
   .noresult{display:none;background:white;border-radius:18px;padding:22px;margin-top:16px;text-align:center;color:#667085}
-  @media(max-width:520px){h1{font-size:24px}.hero{padding:20px}.official{padding:16px}section{padding:18px}.searchrow{display:block}.searchrow input{width:100%}}
+  @media(max-width:720px){.content-layout{grid-template-columns:1fr}.faq-sidebar{position:static;display:grid;grid-template-columns:repeat(2,1fr);gap:6px}.sidebar-title{grid-column:1/-1}.faq-sidebar a{text-align:center;background:#f6f8fb}.faq-main{width:100%}} @media(max-width:520px){h1{font-size:24px}.hero{padding:20px}.official{padding:16px}section{padding:18px}.searchrow{display:block}.searchrow input{width:100%}}
   </style></head><body><main class="wrap"><div class="hero"><h1>${title}</h1><div class="sub">${subtitle}</div>
   <div class="official"><strong>📌 공식 안내 확인</strong><span>세부 자격·일정·제출서류는 해당 연도 공식 안내가 가장 정확합니다.</span><br><a href="${sourceUrl}" target="_blank" rel="noopener">🔎 ${sourceLabel}</a></div>
   <div class="searchbox"><label for="faqSearch">🔍 자주 묻는 질문 검색</label><div class="searchrow"><input id="faqSearch" type="search" placeholder="궁금한 내용을 입력해 보세요. 예: 전학, 대리접수, 시험장소" autocomplete="off"></div><div id="searchCount" class="searchcount">질문 제목과 답변 내용을 바로 검색할 수 있어요.</div></div>
-  <div class="faq-nav"><a href="/guides">🏠 자주 묻는 질문 홈</a><a href="#faq-list">☰ 질문 목록</a></div>
   <div id="faq-list" class="chips">${tabHtml}</div></div>
-  ${body}
-  <div id="noResult" class="noresult">검색 결과가 없습니다. 다른 단어로 검색해 보세요.</div>
+
+  <div class="content-layout">
+    <aside class="faq-sidebar">
+      <div class="sidebar-title">자주 묻는 질문</div>
+      <a href="/guides">전체 보기</a>
+      <a href="/certificates">제증명</a>
+      <a href="/transfer">전·입학</a>
+      <a href="/ged">검정고시</a>
+      <a href="/csat">수능</a>
+    </aside>
+    <div class="faq-main">
+      ${body}
+      <div id="noResult" class="noresult">검색 결과가 없습니다. 다른 단어로 검색해 보세요.</div>
+    </div>
+  </div>
   </main>
   <script>
   (function(){
