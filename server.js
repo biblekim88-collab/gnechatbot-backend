@@ -1969,19 +1969,25 @@ async function kakaoHqContactResponse(intent) {
     const text = kakaoHqContactResponseText(query, contacts);
     const outputs = [{ simpleText: { text } }];
 
-    // 결과가 정확히 1건일 때만 바로 전화 버튼을 제공합니다.
-    if (contacts.length === 1) {
-      const callable = firstCallablePhone(contacts[0].phone);
-      if (callable) {
-        outputs.push({
-          basicCard: {
-            title: `${contacts[0].department}${contacts[0].team ? ` / ${contacts[0].team}` : ''}`,
-            description: truncateOfficialDuty(contacts[0].duty, 180),
-            buttons: [{ label: '☎ 담당자 전화', action: 'phone', phoneNumber: callable.replace(/-/g, '') }]
-          }
-        });
-      }
-    }
+    // 검색 결과가 여러 건이어도 각 담당자별 전화 버튼을 제공합니다.
+    // 카카오 응답이 너무 길어지지 않도록 최대 3건까지만 카드로 표시합니다.
+    (contacts || []).slice(0, 3).forEach((contact) => {
+      const callable = firstCallablePhone(contact.phone);
+      if (!callable) return;
+      outputs.push({
+        basicCard: {
+          title: `${contact.department}${contact.team ? ` / ${contact.team}` : ''}`,
+          description: truncateOfficialDuty(contact.duty, 180),
+          buttons: [
+            {
+              label: `☎ ${callable}`,
+              action: 'phone',
+              phoneNumber: callable.replace(/-/g, '')
+            }
+          ]
+        }
+      });
+    });
 
     return { version: '2.0', template: { outputs } };
   } catch (err) {
