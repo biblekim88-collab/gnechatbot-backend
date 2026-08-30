@@ -5108,7 +5108,7 @@ function gneGuidePage({title, subtitle, accent, tabs, body, sourceUrl, sourceLab
   .searchrow input:focus{border-color:${accent};box-shadow:0 0 0 3px rgba(70,90,170,.12)}
   .searchcount{font-size:13px;color:#6b778c;margin-top:7px}
   .content-layout{display:block;margin-top:16px}
-  .faq-sidebar{position:fixed;top:110px;left:calc(50% - 650px);width:170px;z-index:20;background:#fff;border-radius:18px;padding:14px;box-shadow:0 8px 28px rgba(30,45,80,.10);border:1px solid #e6eaf1}
+  .faq-sidebar{position:fixed;top:110px;right:calc(50% - 650px);width:170px;z-index:20;background:#fff;border-radius:18px;padding:14px;box-shadow:0 8px 28px rgba(30,45,80,.10);border:1px solid #e6eaf1}
   .sidebar-title{font-weight:900;font-size:16px;margin-bottom:8px;padding:6px 8px 10px;border-bottom:1px solid #e8ecf3}
   .faq-sidebar a{display:block;text-decoration:none;color:#344054;font-weight:800;padding:10px 9px;border-radius:10px;margin:2px 0}
   .faq-sidebar a:hover{background:#f1f4f9}
