@@ -3094,6 +3094,48 @@ btn.addEventListener('click',search); q.addEventListener('keydown',e=>{if(e.key=
 document.querySelectorAll('.chip').forEach(b=>b.addEventListener('click',()=>{q.value=b.dataset.q||'';search();}));
 if(presetQuery) setTimeout(search,60);
 </script>
+
+<script>
+(function(){
+  function normalizePhone(s){
+    return String(s||'').replace(/[^0-9+]/g,'');
+  }
+  function linkPhones(root){
+    const walker=document.createTreeWalker(root||document.body,NodeFilter.SHOW_TEXT);
+    const nodes=[];
+    while(walker.nextNode()) nodes.push(walker.currentNode);
+    const re=/(?:0\d{1,2}[-.\s]?\d{3,4}[-.\s]?\d{4})/g;
+    nodes.forEach(node=>{
+      const parent=node.parentElement;
+      if(!parent || ['A','SCRIPT','STYLE','TEXTAREA','INPUT','BUTTON'].includes(parent.tagName)) return;
+      const val=node.nodeValue||'';
+      if(!re.test(val)) return;
+      re.lastIndex=0;
+      const frag=document.createDocumentFragment();
+      let last=0, m;
+      while((m=re.exec(val))){
+        frag.appendChild(document.createTextNode(val.slice(last,m.index)));
+        const a=document.createElement('a');
+        a.href='tel:'+normalizePhone(m[0]);
+        a.textContent='📞 '+m[0];
+        a.style.fontWeight='800';
+        a.style.textDecoration='none';
+        a.style.whiteSpace='nowrap';
+        a.setAttribute('aria-label',m[0]+' 전화걸기');
+        frag.appendChild(a);
+        last=m.index+m[0].length;
+      }
+      frag.appendChild(document.createTextNode(val.slice(last)));
+      parent.replaceChild(frag,node);
+    });
+  }
+  function run(){ linkPhones(document.body); }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',run); else run();
+  const obs=new MutationObserver(()=>{ clearTimeout(window.__phoneLinkTimer); window.__phoneLinkTimer=setTimeout(run,60); });
+  obs.observe(document.body,{childList:true,subtree:true});
+})();
+</script>
+
 </body></html>`);
 });
 
