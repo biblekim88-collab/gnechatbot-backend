@@ -1969,30 +1969,18 @@ async function kakaoHqContactResponse(intent) {
     const text = kakaoHqContactResponseText(query, contacts);
     const outputs = [{ simpleText: { text } }];
 
-    // 상위 3건까지는 담당자별로 바로 전화 버튼을 제공합니다.
-    // (기존에는 검색 결과가 정확히 1건일 때만 전화 버튼을 제공했고,
-    //  2~3건이 함께 나오면 텍스트로만 번호가 안내되어 사용자가 직접 눌러 걸 수 없었습니다.
-    //  실제 문의(전입학·학교폭력 등)는 부서가 2~3곳으로 나뉘어 나오는 경우가 많아
-    //  설문에서 '담당부서·문의처 연결'이 가장 큰 불편사항(24%)으로 나타난 원인 중 하나로 보고 확장합니다.)
-    const cardTargets = (contacts || []).slice(0, 3);
-    const cards = cardTargets
-      .map(c => {
-        const callable = firstCallablePhone(c.phone);
-        if (!callable) return null;
-        return {
-          title: `${c.department}${c.team ? ` / ${c.team}` : ''}`,
-          description: truncateOfficialDuty(c.duty, 180),
-          buttons: [{ label: '☎ 담당자 전화', action: 'phone', phoneNumber: callable.replace(/-/g, '') }]
-        };
-      })
-      .filter(Boolean);
-
-    if (cards.length === 1) {
-      // 카드가 1장뿐이면 캐로셀 없이 기존과 동일하게 basicCard 하나로 보여줍니다.
-      outputs.push({ basicCard: cards[0] });
-    } else if (cards.length > 1) {
-      // 2장 이상이면 옆으로 넘겨볼 수 있는 캐로셀로 묶어서, 부서별로 각각 전화 버튼을 제공합니다.
-      outputs.push({ carousel: { type: 'basicCard', items: cards } });
+    // 결과가 정확히 1건일 때만 바로 전화 버튼을 제공합니다.
+    if (contacts.length === 1) {
+      const callable = firstCallablePhone(contacts[0].phone);
+      if (callable) {
+        outputs.push({
+          basicCard: {
+            title: `${contacts[0].department}${contacts[0].team ? ` / ${contacts[0].team}` : ''}`,
+            description: truncateOfficialDuty(contacts[0].duty, 180),
+            buttons: [{ label: '☎ 담당자 전화', action: 'phone', phoneNumber: callable.replace(/-/g, '') }]
+          }
+        });
+      }
     }
 
     return { version: '2.0', template: { outputs } };
@@ -2462,87 +2450,9 @@ function kakaoTransferSchoolLevelResponse(blocks) {
   };
 }
 
-const ONE_TO_ONE_INFO_TEXT = `1:1 상담 요청 (●'◡'●)
-
-상담원 연결을 원하시면 아래의 ‘상담원 연결’ 버튼을 누른 후 문의 내용을 남겨주세요.
-
-담당자가 문의 내용을 확인하여 답변드리며, 1차 상담으로 해결이 어려운 경우에는 소관 업무 담당자의 연락처를 안내해 드립니다. 😊
-
-⚠️ 1:1 채팅은 교육 관련 단순 질의·이용 안내만 가능해요. 학교·교직원 관련 민원·신고, 조사·조치가 필요한 사항은 국민신문고를 이용해 주세요.
-
-📌 1:1 채팅상담 운영시간
-평일 09:00~18:00
-※ 점심시간 12:00~13:00 제외
-
-📌 경남교육콜센터 전화상담
-평일 09:00~18:00
-점심시간에도 상담 가능합니다.
-(☎ 055-268-1004)`;
-
-function isOneToOneRequestText(value) {
-  const q = compactText(value || '');
-  return /^(1:1|1대1|일대일)(상담|채팅|채팅상담|상담요청|요청)?$/.test(q) ||
-    q === '1:1채팅상담' || q === '1:1상담요청' || q === '일대일채팅상담' || q === '일대일상담요청';
-}
-
-function isOneToOneScopeGuideLabel(value) {
-  const q = compactText(value || '');
-  return /(1:1|1대1|일대일).*이용범위.*안내/.test(q);
-}
-
-function getOneToOneInfoBlock(blocks) {
-  return blocks.find(b => (b.title || '').trim() === '일대일 채팅 상담 안내') || null;
-}
-
-function makeOneToOneBlockQuickReply(blocks, label = '1:1 채팅상담') {
-  const target = getOneToOneInfoBlock(blocks);
-  if (target) {
-    const item = makeKakaoQuickReply(target);
-    item.label = String(label || '1:1 채팅상담').slice(0, 20);
-    item.messageText = '1:1 채팅상담';
-    return item;
-  }
-  return { label: String(label || '1:1 채팅상담').slice(0, 20), action: 'message', messageText: '1:1 채팅상담' };
-}
-
-function kakaoOneToOneInfoResponse(blocks) {
-  const chatBlock = getOneToOneInfoBlock(blocks);
-  const chatBlockId = getKakaoBlockId(chatBlock);
-  const buttons = [];
-
-  if (chatBlockId) {
-    buttons.push({
-      label: '상담원 연결',
-      action: 'block',
-      blockId: chatBlockId,
-      messageText: '1:1 채팅상담'
-    });
-  }
-  buttons.push({
-    label: '☎ 경남교육콜센터',
-    action: 'phone',
-    phoneNumber: '0552681004'
-  });
-
-  return {
-    version: '2.0',
-    template: {
-      outputs: [{ textCard: { text: ONE_TO_ONE_INFO_TEXT, buttons: buttons.slice(0, 3) } }],
-      quickReplies: []
-    }
-  };
-}
-
 function buildBlockQuickReplies(block, blocks) {
   const out = [];
   (block.quick_replies || []).forEach(qr => {
-    // '1:1상담 이용범위 안내' 같은 중간 안내 버튼은 노출하지 않고,
-    // 1:1 상담 요청 버튼은 실제 '일대일 채팅 상담 안내' 블록으로 직접 연결합니다.
-    if (isOneToOneScopeGuideLabel(qr.label)) return;
-    if (isOneToOneRequestText(qr.label) || isOneToOneRequestText(qr.block)) {
-      out.push(makeOneToOneBlockQuickReply(blocks, qr.label || '1:1 채팅상담'));
-      return;
-    }
     // 이용자에게 보이는 label이 현재 title과 더 잘 맞는 경우가 많아 label을 먼저 확인
     const target = findBlockForKakaoReference(qr.label, blocks) || findBlockForKakaoReference(qr.block, blocks);
     if (target) {
@@ -2555,11 +2465,6 @@ function buildBlockQuickReplies(block, blocks) {
   });
   (block.responses || []).forEach(r => (r.buttons || []).forEach(b => {
     if (b.type !== 'block') return;
-    if (isOneToOneScopeGuideLabel(b.label)) return;
-    if (isOneToOneRequestText(b.label) || isOneToOneRequestText(b.value)) {
-      out.push(makeOneToOneBlockQuickReply(blocks, b.label || '1:1 채팅상담'));
-      return;
-    }
     const target = findBlockForKakaoReference(b.value, blocks) || findBlockForKakaoReference(b.label, blocks);
     if (target) {
       const item = makeKakaoQuickReply(target);
@@ -2589,9 +2494,6 @@ function kakaoFallbackResponse(utterance, blocks, options = {}) {
   // 따라서 웰컴블록에서 제증명·검정고시·전입학 등의 메뉴를 수정하면 폴백에도 자동 반영됩니다.
   const welcomeBlock = blocks.find(b => (b.title || '').trim() === '챗봇 이용 안내');
   let quickReplies = welcomeBlock ? buildBlockQuickReplies(welcomeBlock, blocks) : [];
-  // 폴백 화면에는 별도의 '1:1상담 이용범위 안내' 메뉴를 표시하지 않습니다.
-  // 1:1 상담 버튼은 아래 카드 버튼에서 실제 1:1 안내 블록으로 직접 연결합니다.
-  quickReplies = quickReplies.filter(q => !isOneToOneScopeGuideLabel(q.label));
 
   // 혹시 웰컴블록을 찾지 못하는 예외 상황에서는 기존 질문 인식 불가 안내 블록 메뉴를 사용합니다.
   if (!quickReplies.length) {
@@ -2970,9 +2872,7 @@ app.get('/staff-search', (req, res) => {
   #regionBox,#deptBox{display:none;margin-top:12px;padding-top:13px;border-top:1px solid #edf0f2}.region-title,.dept-title{font-size:14px;font-weight:800;margin-bottom:4px}.region-help,.dept-help{font-size:12px;line-height:1.5;color:#777;margin-bottom:10px}
   .regions,.depts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.region-link,.dept-link{display:block;text-decoration:none;text-align:center;border:1px solid #dfe4e8;background:#fff;border-radius:10px;padding:10px 7px;color:#222;font-size:13px;font-weight:700;cursor:pointer}.dept-count{display:block;font-size:11px;color:#888;font-weight:500;margin-top:2px}
   #status{font-size:14px;color:#666;margin:16px 2px 8px}.result{background:#fff;border-radius:14px;padding:15px 16px;margin-top:10px;box-shadow:0 1px 8px rgba(0,0,0,.05)}
-  .dept{font-weight:800;font-size:16px;margin-bottom:6px}.phone{display:inline-block;font-weight:700;color:#1b5dbf;text-decoration:none}.duty{font-size:14px;line-height:1.55;white-space:pre-wrap;color:#444}
-  .phoneRow{display:flex;align-items:center;gap:8px;margin:2px 0 8px}.copyBtn{border:1px solid #cfd6dd;background:#fff;border-radius:8px;padding:3px 10px;font-size:12px;color:#444;cursor:pointer}
-  .kakaoNotice{display:none;background:#fff3cd;border:1px solid #ffe08a;border-radius:12px;padding:10px 12px;font-size:13px;line-height:1.55;color:#664d03;margin-bottom:14px}
+  .dept{font-weight:800;font-size:16px;margin-bottom:6px}.phone{display:inline-block;margin:2px 0 8px;font-weight:700;color:#1b5dbf;text-decoration:none}.duty{font-size:14px;line-height:1.55;white-space:pre-wrap;color:#444}
   .hl{color:#1b5dbf;font-weight:800}
   .clarify{background:#fff7cc;border:1px solid #ffe36b;border-radius:14px;padding:14px 15px;margin-top:10px;line-height:1.55}.clarify-title{font-weight:800;margin-bottom:4px}.group{margin-top:14px}.group-title{font-size:16px;font-weight:800;margin:0 0 8px}.group-desc{font-size:13px;color:#666;margin:-3px 0 8px}.group .result{margin-top:8px;border:1px solid #eef1f4;box-shadow:none}
   .notice{font-size:12px;line-height:1.55;color:#777;margin-top:16px}.empty{background:#fff;border-radius:14px;padding:18px;margin-top:10px;color:#555}
@@ -2985,7 +2885,6 @@ app.get('/staff-search', (req, res) => {
     <h1>본청 업무담당자 검색</h1>
     <div class="sub">찾으시는 <b>업무명만</b> 입력해 주세요. ‘담당자’라고 붙이지 않아도 됩니다.<br>경상남도교육청 <b>본청</b> 공식 업무분장 정보를 기준으로 검색합니다.</div>
     <div class="scope"><b>지역 업무는 별도 확인이 필요합니다.</b><br>초·중학교 전입학, 학원·교습소 등 지역교육지원청 담당 업무는 아래 <b>지역교육청 안내</b>에서 해당 교육지원청 누리집의 업무분장을 확인해 주세요.</div>
-    <div id="kakaoNotice" class="kakaoNotice">📱 번호를 누르면 전화 화면으로 연결돼요. 거기서 <b>통화</b> 버튼만 누르면 돼요. 혹시 안 넘어가면 번호 옆 <b>복사</b> 버튼으로 복사해서 전화 앱에 붙여넣어 주세요.</div>
     <div class="search">
       <input id="q" type="search" placeholder="예: 다자녀" autocomplete="off">
       <button id="btn" type="button">검색</button>
@@ -3081,27 +2980,7 @@ function hl(text,terms){
   html+=esc(raw.slice(pos));
   return html;
 }
-function tel(v){const m=String(v||'').match(/0\\d{1,2}-\\d{3,4}-\\d{4}/);return m?m[0]:'';}
-function copyPhone(btn,num){
-  const doCopy=text=>{
-    if(navigator.clipboard&&navigator.clipboard.writeText) return navigator.clipboard.writeText(text);
-    const ta=document.createElement('textarea');
-    ta.value=text; ta.style.position='fixed'; ta.style.opacity='0';
-    document.body.appendChild(ta); ta.focus(); ta.select();
-    try{document.execCommand('copy');}catch(_){}
-    document.body.removeChild(ta);
-    return Promise.resolve();
-  };
-  doCopy(num).then(()=>{
-    const old=btn.textContent; btn.textContent='복사됨!';
-    setTimeout(()=>{btn.textContent=old;},1300);
-  }).catch(()=>{});
-}
-// 카카오톡 인앱브라우저는 tel: 링크를 막는 경우가 있어, 번호 복사/길게 누르기 안내를 보여줍니다.
-if(/KAKAOTALK/i.test(navigator.userAgent)){
-  const notice=document.getElementById('kakaoNotice');
-  if(notice) notice.style.display='block';
-}
+function tel(v){const m=String(v||'').match(/0\d{1,2}-\d{3,4}-\d{4}/);return m?m[0]:'';}
 function setRegion(open){regionBox.style.display=open?'block':'none';regionToggle.textContent=open?'🏫 지역교육청 안내 닫기':'🏫 지역교육청 안내 보기';}
 function setDept(open){deptBox.style.display=open?'block':'none';deptToggle.textContent=open?'🏢 본청 부서 닫기':'🏢 본청 부서 보기';}
 regionToggle.addEventListener('click',()=>{setDept(false);setRegion(regionBox.style.display!=='block');});
@@ -3132,11 +3011,7 @@ async function search(){
     if(!r.ok||!d.ok) throw new Error(d.message||'검색에 실패했습니다.');
     // 검색어가 여러 단어이면 각 단어를 독립적으로 강조합니다.\n    // 예: '고등학교 전입학' → 결과 문장 안에서 두 단어가 서로 떨어져 있어도 각각 파란색 표시\n    const terms=(query.match(/[가-힣A-Za-z0-9]+/g)||[]).map(x=>x.trim()).filter(Boolean);
     const renderContact=c=>{
-      const p=tel(c.phone);
-      const raw=p.replace(/-/g,'');
-      const phone=p
-        ?'<div class="phoneRow"><a class="phone" href="tel:'+raw+'">☎ '+esc(p)+'</a><button type="button" class="copyBtn" onclick="copyPhone(this,\\''+raw+'\\')">복사</button></div>'
-        :'<div class="phone">☎ '+esc(c.phone||'')+'</div>';
+      const p=tel(c.phone), phone=p?'<a class="phone" href="tel:'+p.replace(/-/g,'')+'">☎ '+esc(p)+'</a>':'<div class="phone">☎ '+esc(c.phone||'')+'</div>';
       return '<div class="result"><div class="dept">'+hl(c.department||'',terms)+(c.team?' / '+hl(c.team,terms):'')+'</div>'+phone+'<div class="duty">'+hl(c.duty||'',terms)+'</div></div>';
     };
     if(d.disambiguation==='construction'){
@@ -3871,15 +3746,6 @@ app.post('/api/kakao-skill', async (req, res) => {
     const blockLabel = kakaoInteraction.currentBlock || kakaoInteraction.lastBlock || kakaoInteraction.referrerBlock || '카카오 블록 호출';
     trackQuery('[블록 호출]', blockLabel, true, 'kakao-block-event', 'kakao:' + kakaoUserId, kakaoInteraction);
     return res.json(withStaffSearchQuickReply(kakaoFallbackResponse('', blocks, { failCount: 0 })));
-  }
-
-  // 1:1 상담 요청이 블록이 아니라 스킬로 들어온 경우에도 블록과 같은 안내문을 보여줍니다.
-  // 별도의 '1:1상담 이용범위 안내' 문구/버튼을 거치지 않고 바로 1:1 안내로 통일합니다.
-  if (isOneToOneRequestText(utterance) || isOneToOneScopeGuideLabel(utterance)) {
-    resetKakaoFailStreak(kakaoUserId);
-    resetKakaoTransferFailStreak(kakaoUserId);
-    trackQuery(utterance, '일대일 채팅 상담 안내', true, 'kakao-one-to-one-help', 'kakao:' + kakaoUserId, kakaoInteraction);
-    return res.json(kakaoOneToOneInfoResponse(blocks));
   }
 
   // 담당자 메뉴 자체를 누른 경우에는 블록 파라미터나 일반 시나리오 매칭보다 먼저 처리합니다.
@@ -5147,6 +5013,80 @@ function startRenderKeepWarm() {
   const timer = setInterval(ping, KEEP_WARM_INTERVAL_MS);
   if (timer.unref) timer.unref();
 }
+
+
+// ---- 교육 제증명 통합 안내 페이지 ----
+// 카카오 챗봇의 '증명서 발급(제증명)' 메뉴에서 이 페이지로 연결할 수 있습니다.
+app.get('/certificates', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  res.type('html').send(`<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<title>교육 제증명 발급 안내 | 경상남도교육청 민원 챗봇</title>
+<style>
+:root{--p:#6f3c88;--p2:#f3eaf7;--ink:#1f2430;--muted:#69707d;--line:#e6e1e9;--bg:#f7f6f9;--white:#fff;--ok:#176b4d}
+*{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--ink);font-family:"Pretendard","Noto Sans KR","Apple SD Gothic Neo","Malgun Gothic",sans-serif;line-height:1.55}
+a{color:inherit;text-decoration:none}.wrap{max-width:860px;margin:0 auto;padding:0 16px 46px}
+.hero{background:linear-gradient(135deg,#6f3c88,#8e5aa5);color:#fff;padding:30px 0 28px;margin-bottom:18px;box-shadow:0 8px 28px rgba(74,38,91,.16)}
+.hero .wrap{padding-bottom:0}.eyebrow{font-size:13px;opacity:.9;margin-bottom:6px}.hero h1{font-size:28px;line-height:1.25;margin:0 0 8px}.hero p{margin:0;font-size:15px;opacity:.94}
+.notice{background:#fff;border:1px solid var(--line);border-radius:16px;padding:15px 16px;margin:15px 0;box-shadow:0 4px 16px rgba(30,25,35,.04)}
+.notice strong{color:var(--p)}.chips{display:flex;gap:8px;overflow:auto;padding:3px 0 9px;scrollbar-width:none}.chip{flex:0 0 auto;border:1px solid #dacbe2;background:#fff;color:#57316a;padding:9px 13px;border-radius:999px;font-size:14px;font-weight:700;cursor:pointer}.chip.active{background:var(--p);color:#fff;border-color:var(--p)}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:11px;margin:8px 0 18px}.card{background:#fff;border:1px solid var(--line);border-radius:17px;padding:16px;box-shadow:0 4px 14px rgba(30,25,35,.035)}.card h3{margin:0 0 5px;font-size:16px}.card p{margin:0;color:var(--muted);font-size:14px}.icon{font-size:23px;margin-bottom:7px}
+.section-title{font-size:20px;margin:25px 0 10px}.faq{background:#fff;border:1px solid var(--line);border-radius:15px;margin:9px 0;overflow:hidden}.faq summary{list-style:none;cursor:pointer;padding:16px 44px 16px 16px;font-weight:800;position:relative}.faq summary::-webkit-details-marker{display:none}.faq summary:after{content:'+';position:absolute;right:16px;top:12px;font-size:24px;color:var(--p)}.faq[open] summary:after{content:'–'}.faq .answer{border-top:1px solid var(--line);padding:15px 16px 17px;color:#3d4350;font-size:14px}.answer ul{padding-left:18px;margin:7px 0}.answer li{margin:4px 0}.tag{display:inline-block;background:var(--p2);color:#663679;border-radius:6px;padding:2px 7px;font-size:12px;font-weight:800;margin-right:4px}.mini{font-size:12px;color:var(--muted);margin-top:9px}
+.actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:20px 0}.btn{border-radius:13px;padding:13px 12px;text-align:center;font-weight:800;border:1px solid #d7c7df;background:#fff;color:#5c2f70}.btn.primary{background:var(--p);color:#fff;border-color:var(--p)}
+.footer{font-size:12px;color:var(--muted);padding:18px 2px}.hidden{display:none!important}
+@media(max-width:600px){.hero h1{font-size:24px}.grid{grid-template-columns:1fr}.actions{grid-template-columns:1fr}.wrap{padding-left:14px;padding-right:14px}}
+</style>
+</head>
+<body>
+<header class="hero"><div class="wrap"><div class="eyebrow">경상남도교육청 민원상담 1004챗봇</div><h1>교육 제증명 발급 안내</h1><p>졸업·성적·생활기록부, 검정고시, 교직원 증명서 등 자주 묻는 내용을 한곳에서 확인하세요.</p></div></header>
+<main class="wrap">
+  <div class="notice"><strong>먼저 확인해 주세요.</strong><br>증명서 종류·졸업연도·전산자료 보유 여부 등에 따라 온라인 발급 가능 여부가 달라질 수 있습니다. 온라인 발급이 어려운 경우 방문·FAX 등 다른 방법을 이용할 수 있습니다.</div>
+
+  <div class="chips" aria-label="분야 선택">
+    <button class="chip active" data-cat="all">전체</button><button class="chip" data-cat="student">학생</button><button class="chip" data-cat="ged">검정고시</button><button class="chip" data-cat="staff">교직원</button><button class="chip" data-cat="closed">폐교</button><button class="chip" data-cat="method">발급방법</button>
+  </div>
+
+  <div class="grid">
+    <a class="card" href="#faq-online"><div class="icon">💻</div><h3>온라인 발급</h3><p>정부24 등 온라인 발급 방법</p></a>
+    <a class="card" href="#faq-agent"><div class="icon">👥</div><h3>대리 발급</h3><p>대리 신청 가능 여부와 준비사항</p></a>
+    <a class="card" href="#faq-closed"><div class="icon">🏫</div><h3>폐교학교</h3><p>기록 보관기관과 신청 경로 확인</p></a>
+    <a class="card" href="#faq-fail"><div class="icon">🔎</div><h3>발급이 안 될 때</h3><p>온라인 발급 제한 시 대체 방법</p></a>
+  </div>
+
+  <h2 class="section-title">자주 묻는 질문</h2>
+
+  <details class="faq" data-cat="student method" id="faq-online" open><summary>학교 관련 증명서는 어디서 발급받을 수 있나요?</summary><div class="answer"><span class="tag">학생</span><span class="tag">발급방법</span><p>졸업증명서, 성적증명서, 재학증명서, 학교생활기록부 등 교육 관련 증명서는 증명서 종류에 따라 <b>정부24 온라인 발급, 방문, FAX, 무인민원발급기 등</b>을 이용할 수 있습니다.</p><p>온라인 발급 가능 여부는 증명서 종류와 전산자료 보유 범위 등에 따라 달라질 수 있으므로, 발급 화면에서 대상 여부를 확인해 주세요.</p></div></details>
+
+  <details class="faq" data-cat="student ged staff"><summary>어떤 교육 제증명을 발급받을 수 있나요?</summary><div class="answer"><p><b>학생</b>: 졸업(예정)증명서, 성적증명서, 재학증명서, 학교생활기록부, 제적증명서, 정원외관리증명서, 교육비납입증명서 등</p><p><b>검정고시</b>: 합격증명서, 성적증명서, 과목합격증명서 등</p><p><b>교직원</b>: 재직증명서, 경력증명서, 퇴직증명원, 퇴직예정증명원, 수상확인원, 연수이수확인원, 휴직증명서 등</p><div class="mini">※ 실제 발급 가능 여부와 신청방법은 각 증명서별 안내를 확인해 주세요.</div></div></details>
+
+  <details class="faq" data-cat="method student" id="faq-fail"><summary>정부24에서 증명서가 발급되지 않아요.</summary><div class="answer"><p>증명서 종류, 졸업연도 또는 전산자료 보유 여부 등에 따라 온라인 발급이 제한될 수 있습니다.</p><p>온라인 발급이 되지 않는 경우 <b>학교·교육청·교육지원청 방문 또는 FAX 민원 등</b> 다른 발급방법을 확인해 주세요. 정확한 발급 가능 여부는 해당 학교 또는 담당기관에 확인하면 가장 정확합니다.</p></div></details>
+
+  <details class="faq" data-cat="method" id="faq-agent"><summary>가족이나 대리인이 대신 발급받을 수 있나요?</summary><div class="answer"><p>증명서와 신청방법에 따라 대리발급 가능 여부와 필요한 서류가 다릅니다. 방문 대리 신청 시에는 일반적으로 <b>신분증, 위임장 등 본인과 대리관계를 확인할 수 있는 서류</b>가 필요할 수 있습니다.</p><p>온라인에서는 대리 신청이 제한되는 민원도 있으므로 신청하려는 증명서의 상세 안내를 먼저 확인해 주세요.</p></div></details>
+
+  <details class="faq" data-cat="ged"><summary>검정고시 증명서는 어떻게 발급받나요?</summary><div class="answer"><p>검정고시 관련 증명서에는 <b>합격증명서, 성적증명서, 과목합격증명서</b> 등이 있습니다.</p><p>증명서에 따라 인터넷, 방문, FAX, 우편, 무인민원발급기 등을 이용할 수 있습니다. 예를 들어 검정고시 합격증명은 정부24에서 인터넷·방문·FAX·우편·무인발급기 신청이 안내되어 있습니다.</p></div></details>
+
+  <details class="faq" data-cat="closed student" id="faq-closed"><summary>폐교한 학교의 증명서는 어디서 발급받나요?</summary><div class="answer"><p>폐교한 학교의 증명서는 해당 학교의 기록을 보관하고 있는 교육기관을 확인한 후 신청해야 합니다.</p><p>보관기관을 모르거나 발급기관 확인이 필요한 경우 아래 <b>담당부서·문의처 찾기</b>를 이용하거나 경남교육콜센터로 문의해 주세요.</p></div></details>
+
+  <details class="faq" data-cat="method"><summary>다른 지역 학교 증명서도 경남에서 받을 수 있나요?</summary><div class="answer"><p>전국 시·도교육청 민원실 및 학교 행정실 등에서 <b>어디서나 민원(FAX)</b> 방식으로 신청할 수 있는 교육 제증명이 있습니다. 발급하려는 증명서가 대상인지 접수기관에서 확인해 주세요.</p></div></details>
+
+  <details class="faq" data-cat="staff"><summary>교직원 경력·재직 관련 증명서는 어디서 발급하나요?</summary><div class="answer"><p>교육공무원 등의 재직증명서, 경력증명서, 퇴직증명원, 퇴직예정증명원, 수상확인원, 연수이수확인원, 휴직증명서 등이 교육 제증명으로 제공됩니다.</p><p>정부24 온라인 발급 가능 여부 또는 소속·경력기관을 통한 발급방법을 확인해 주세요.</p></div></details>
+
+  <div class="actions">
+    <a class="btn primary" href="https://www.gov.kr" target="_blank" rel="noopener">정부24에서 발급하기</a>
+    <a class="btn" href="/staff-search">담당부서·문의처 찾기</a>
+  </div>
+  <div class="notice"><b>정보 최종 확인: 2026. 8. 30.</b><br>이 페이지는 민원인의 이해를 돕기 위한 안내입니다. 개별 증명서의 실제 발급 가능 여부·구비서류는 정부24 또는 접수·처리기관의 최신 안내를 확인해 주세요.</div>
+  <div class="footer">경상남도교육청 민원상담 1004챗봇 · 교육 제증명 통합 안내</div>
+</main>
+<script>
+const chips=[...document.querySelectorAll('.chip')], faqs=[...document.querySelectorAll('.faq')];
+chips.forEach(btn=>btn.addEventListener('click',()=>{chips.forEach(x=>x.classList.remove('active'));btn.classList.add('active');const c=btn.dataset.cat;faqs.forEach(f=>f.classList.toggle('hidden',c!=='all'&&!f.dataset.cat.split(/\\s+/).includes(c)));}));
+</script>
+</body></html>`);
+});
 
 app.get('/', (req, res) => {
   res.send('경상남도교육청 민원 챗봇 백엔드가 정상적으로 실행 중입니다.');
