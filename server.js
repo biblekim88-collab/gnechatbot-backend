@@ -5078,151 +5078,55 @@ function startRenderKeepWarm() {
 
 // ---- 교육 제증명 통합 안내 페이지 ----
 // 카카오 챗봇의 '증명서 발급(제증명)' 메뉴에서 이 페이지로 연결할 수 있습니다.
-app.get('/certificates', (req, res) => {
-  res.set('Cache-Control', 'no-store');
-  res.type('html').send(`<!doctype html>
-<html lang="ko">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-<title>교육 제증명 발급 안내 | 경상남도교육청 민원 챗봇</title>
-<style>
-:root{--p:#6f3c88;--p2:#f3eaf7;--ink:#1f2430;--muted:#69707d;--line:#e6e1e9;--bg:#f7f6f9;--white:#fff;--ok:#176b4d}
-*{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--ink);font-family:"Pretendard","Noto Sans KR","Apple SD Gothic Neo","Malgun Gothic",sans-serif;line-height:1.55}
-a{color:inherit;text-decoration:none}.wrap{max-width:860px;margin:0 auto;padding:0 16px 46px}
-.hero{background:linear-gradient(135deg,#6f3c88,#8e5aa5);color:#fff;padding:30px 0 28px;margin-bottom:18px;box-shadow:0 8px 28px rgba(74,38,91,.16)}
-.hero .wrap{padding-bottom:0}.eyebrow{font-size:13px;opacity:.9;margin-bottom:6px}.hero h1{font-size:28px;line-height:1.25;margin:0 0 8px}.hero p{margin:0;font-size:15px;opacity:.94}
-.notice{background:#fff;border:1px solid var(--line);border-radius:16px;padding:15px 16px;margin:15px 0;box-shadow:0 4px 16px rgba(30,25,35,.04)}
-.notice strong{color:var(--p)}.chips{display:flex;gap:8px;overflow:auto;padding:3px 0 9px;scrollbar-width:none}.chip{flex:0 0 auto;border:1px solid #dacbe2;background:#fff;color:#57316a;padding:9px 13px;border-radius:999px;font-size:14px;font-weight:700;cursor:pointer}.chip.active{background:var(--p);color:#fff;border-color:var(--p)}
-.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:11px;margin:8px 0 18px}.card{background:#fff;border:1px solid var(--line);border-radius:17px;padding:16px;box-shadow:0 4px 14px rgba(30,25,35,.035)}.card h3{margin:0 0 5px;font-size:16px}.card p{margin:0;color:var(--muted);font-size:14px}.icon{font-size:23px;margin-bottom:7px}
-.section-title{font-size:20px;margin:25px 0 10px}.faq{background:#fff;border:1px solid var(--line);border-radius:15px;margin:9px 0;overflow:hidden}.faq summary{list-style:none;cursor:pointer;padding:16px 44px 16px 16px;font-weight:800;position:relative}.faq summary::-webkit-details-marker{display:none}.faq summary:after{content:'+';position:absolute;right:16px;top:12px;font-size:24px;color:var(--p)}.faq[open] summary:after{content:'–'}.faq .answer{border-top:1px solid var(--line);padding:15px 16px 17px;color:#3d4350;font-size:14px}.answer ul{padding-left:18px;margin:7px 0}.answer li{margin:4px 0}.tag{display:inline-block;background:var(--p2);color:#663679;border-radius:6px;padding:2px 7px;font-size:12px;font-weight:800;margin-right:4px}.mini{font-size:12px;color:var(--muted);margin-top:9px}
-.actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:20px 0}.btn{border-radius:13px;padding:13px 12px;text-align:center;font-weight:800;border:1px solid #d7c7df;background:#fff;color:#5c2f70}.btn.primary{background:var(--p);color:#fff;border-color:var(--p)}
-.footer{font-size:12px;color:var(--muted);padding:18px 2px}.hidden{display:none!important}
-@media(max-width:600px){.hero h1{font-size:24px}.grid{grid-template-columns:1fr}.actions{grid-template-columns:1fr}.wrap{padding-left:14px;padding-right:14px}}
+app.get('/certificates', (req,res) => {
+ const body = `
+ <section id="online"><h2>온라인 발급</h2>
+ <details open><summary>학교 관련 증명서는 어디서 발급하나요?</summary><div class="answer">졸업증명서, 성적증명서, 재학증명서, 학교생활기록부 등 일부 교육 관련 증명서는 <b>정부24 등 온라인 서비스</b>를 통해 발급할 수 있습니다. 증명서 종류와 전산자료 보유 여부 등에 따라 온라인 발급 가능 여부가 다를 수 있습니다.
+ <div class="buttons"><a class="btn" href="https://www.gov.kr" target="_blank" rel="noopener">정부24 바로가기</a></div></div></details>
+ <details><summary>온라인 발급이 안 돼요.</summary><div class="answer">증명서 종류, 졸업연도 또는 전산자료 보유 여부 등에 따라 온라인 발급이 제한될 수 있습니다. 온라인 발급이 되지 않는 경우 학교·교육기관 방문 또는 FAX 민원 등 다른 발급방법을 이용할 수 있습니다.</div></details>
+ </section>
 
-.cert-search{background:#fff;border:2px solid #cbb2d8;border-radius:17px;padding:15px 16px;margin:0 0 12px;box-shadow:0 4px 16px rgba(30,25,35,.05)}
-.cert-search-title{font-size:17px;font-weight:900;color:#4f2761;margin-bottom:8px}
-.cert-search input{width:100%;border:1px solid #cec6d2;border-radius:12px;padding:13px 14px;font-size:16px;outline:none}
-.cert-search input:focus{border-color:var(--p);box-shadow:0 0 0 3px rgba(111,60,136,.12)}
-.cert-search-count{font-size:12px;color:var(--muted);margin-top:7px}
-.cert-official{background:linear-gradient(135deg,#6f3c88,#8e5aa5);color:#fff;border-radius:17px;padding:16px;margin:0 0 14px;box-shadow:0 6px 18px rgba(74,38,91,.16)}
-.cert-official-title{font-size:17px;font-weight:900;margin-bottom:4px}
-.cert-official a{display:inline-block;margin-top:10px;background:#fff;color:#5c2f70!important;border-radius:11px;padding:10px 13px;font-weight:900}
-.cert-hidden{display:none!important}.cert-noresult{display:none;background:#fff;border:1px solid var(--line);border-radius:15px;padding:18px;text-align:center;color:var(--muted);margin:10px 0}
+ <section id="types"><h2>발급 가능한 증명서</h2>
+ <details open><summary>어떤 증명서를 발급할 수 있나요?</summary><div class="answer">
+ <b>학생</b>: 졸업증명서, 졸업예정증명서, 재학증명서, 성적증명서, 학교생활기록부 등<br>
+ <b>검정고시</b>: 합격증명서, 성적증명서, 과목합격증명서 등<br>
+ <b>교직원</b>: 경력증명서, 재직증명서, 퇴직 관련 증명서 등
+ <div class="notice small">※ 증명서별 발급 가능 방법은 다를 수 있습니다.</div></div></details>
+ </section>
 
-</style>
-</head>
-<body>
-<header class="hero"><div class="wrap"><div class="eyebrow">경상남도교육청 민원상담 1004챗봇</div><h1>교육 제증명 발급 안내</h1><p>졸업·성적·생활기록부, 검정고시, 교직원 증명서 등 자주 묻는 내용을 한곳에서 확인하세요.</p></div></header>
-<main class="wrap">
+ <section id="proxy"><h2>방문·대리 발급</h2>
+ <details open><summary>가족이나 대리인이 대신 발급받을 수 있나요?</summary><div class="answer">
+ <p>방문 발급은 대상자의 연령과 방문자에 따라 준비서류가 달라집니다.</p>
+ <p><b>① 본인(만 14세 이상)</b><br>본인의 신분증</p>
+ <p><b>② 만 14세 이상 대상자의 제3자 방문</b><br>위임장 + 제증명 대상자의 신분증(사본 가능) + 방문 대리인의 신분증</p>
+ <p><b>③ 만 14세 미만 대상자를 법정대리인이 직접 방문</b><br>법정대리인의 신분증 + 법정대리인임을 확인할 수 있는 서류</p>
+ <p><b>④ 만 14세 미만 대상자의 제3자 방문</b><br>법정대리인의 위임장 + 법정대리인의 신분증(사본 가능) + 방문 대리인의 신분증 + 법정대리인임을 확인할 수 있는 서류</p>
+ <div class="buttons"><a class="btn" href="https://www.gne.go.kr/www/minwon/complaints/guide/guide_02.jsp" target="_blank" rel="noopener">구비서류·위임장 확인</a></div>
+ </div></details>
+ <details><summary>방문 발급은 어떻게 하나요?</summary><div class="answer">민원실 접수 → 증명서 작성(민원실·해당부서) → 민원실 교부 순으로 처리됩니다. 본인이 방문하는 경우 신분증을 준비하고, 대리인이 방문하는 경우에는 대리발급 구비서류를 확인해 주세요.</div></details>
+ <details><summary>신분증으로 인정되는 것은 무엇인가요?</summary><div class="answer">주민등록증, 운전면허증, 청소년증, 여권, 공무원증 등 행정기관이 발급한 신분증명서를 사용할 수 있습니다.</div></details>
+ </section>
 
-  <div class="cert-official">
-    <div class="cert-official-title">📌 공식 발급안내 확인</div>
-    <div>발급방법·구비서류는 경상남도교육청 공식 안내가 가장 정확합니다.</div>
-    <a href="https://www.gne.go.kr/www/minwon/complaints/guide/guide_02.jsp" target="_blank" rel="noopener">🔎 경남교육청 제증명 발급안내</a>
-  </div>
-
-  <div class="cert-search">
-    <div class="cert-search-title">🔍 자주 묻는 질문 검색</div>
-    <input id="certFaqSearch" type="search" placeholder="예: 대리발급, 온라인 발급, 폐교학교, 생활기록부" autocomplete="off">
-    <div id="certSearchCount" class="cert-search-count">질문 제목과 답변 내용을 바로 검색할 수 있어요.</div>
-    <div style="display:flex;gap:8px;margin-top:10px">
-      <a href="/guides" style="flex:1;text-align:center;text-decoration:none;background:#f3f0f5;color:#5c2f70;border-radius:10px;padding:9px;font-weight:900">🏠 자주 묻는 질문 홈</a>
-      <a href="#cert-faq-list" style="flex:1;text-align:center;text-decoration:none;background:#f3f0f5;color:#5c2f70;border-radius:10px;padding:9px;font-weight:900">☰ 질문 목록</a>
-    </div>
-  </div>
-
-  <div class="notice"><strong>먼저 확인해 주세요.</strong><br>증명서 종류·졸업연도·전산자료 보유 여부 등에 따라 온라인 발급 가능 여부가 달라질 수 있습니다. 온라인 발급이 어려운 경우 방문·FAX 등 다른 방법을 이용할 수 있습니다.</div>
-
-  <div class="chips" aria-label="분야 선택">
-    <button class="chip active" data-cat="all">전체</button><button class="chip" data-cat="student">학생</button><button class="chip" data-cat="ged">검정고시</button><button class="chip" data-cat="staff">교직원</button><button class="chip" data-cat="closed">폐교</button><button class="chip" data-cat="method">발급방법</button>
-  </div>
-
-  <div class="grid">
-    <a class="card" href="#faq-online"><div class="icon">💻</div><h3>온라인 발급</h3><p>정부24 등 온라인 발급 방법</p></a>
-    <a class="card" href="#faq-agent"><div class="icon">👥</div><h3>대리 발급</h3><p>대리 신청 가능 여부와 준비사항</p></a>
-    <a class="card" href="#faq-closed"><div class="icon">🏫</div><h3>폐교학교</h3><p>기록 보관기관과 신청 경로 확인</p></a>
-    <a class="card" href="#faq-fail"><div class="icon">🔎</div><h3>발급이 안 될 때</h3><p>온라인 발급 제한 시 대체 방법</p></a>
-  </div>
-
-  <h2 class="section-title">자주 묻는 질문</h2>
-
-  <div id="cert-faq-list"></div>
-  <details class="faq" data-cat="student method" id="faq-online" open><summary>학교 관련 증명서는 어디서 발급받을 수 있나요?</summary><div class="answer"><span class="tag">학생</span><span class="tag">발급방법</span><p>졸업증명서, 성적증명서, 재학증명서, 학교생활기록부 등 교육 관련 증명서는 증명서 종류에 따라 <b>정부24 온라인 발급, 방문, FAX, 무인민원발급기 등</b>을 이용할 수 있습니다.</p><p>온라인 발급 가능 여부는 증명서 종류와 전산자료 보유 범위 등에 따라 달라질 수 있으므로, 발급 화면에서 대상 여부를 확인해 주세요.</p></div></details>
-
-  <details class="faq" data-cat="student ged staff"><summary>어떤 교육 제증명을 발급받을 수 있나요?</summary><div class="answer"><p><b>학생</b>: 졸업(예정)증명서, 성적증명서, 재학증명서, 학교생활기록부, 제적증명서, 정원외관리증명서, 교육비납입증명서 등</p><p><b>검정고시</b>: 합격증명서, 성적증명서, 과목합격증명서 등</p><p><b>교직원</b>: 재직증명서, 경력증명서, 퇴직증명원, 퇴직예정증명원, 수상확인원, 연수이수확인원, 휴직증명서 등</p><div class="mini">※ 실제 발급 가능 여부와 신청방법은 각 증명서별 안내를 확인해 주세요.</div></div></details>
-
-  <details class="faq" data-cat="method student" id="faq-fail"><summary>정부24에서 증명서가 발급되지 않아요.</summary><div class="answer"><p>증명서 종류, 졸업연도 또는 전산자료 보유 여부 등에 따라 온라인 발급이 제한될 수 있습니다.</p><p>온라인 발급이 되지 않는 경우 <b>학교·교육청·교육지원청 방문 또는 FAX 민원 등</b> 다른 발급방법을 확인해 주세요. 정확한 발급 가능 여부는 해당 학교 또는 담당기관에 확인하면 가장 정확합니다.</p></div></details>
-
-  <details class="faq" data-cat="method" id="faq-agent"><summary>가족이나 대리인이 대신 발급받을 수 있나요?</summary><div class="answer">
-    <p>네. 방문 발급은 대상자의 연령과 방문자에 따라 준비서류가 달라집니다.</p>
-    <p><b>① 본인(만 14세 이상)이 방문하는 경우</b><br>본인의 신분증을 준비해 주세요.</p>
-    <p><b>② 만 14세 이상 대상자의 제3자가 방문하는 경우</b><br>위임장 + 제증명 대상자의 신분증(사본 가능) + 방문 대리인의 신분증이 필요합니다.</p>
-    <p><b>③ 만 14세 미만 대상자를 법정대리인이 직접 방문하는 경우</b><br>법정대리인의 신분증 + 법정대리인임을 확인할 수 있는 서류가 필요합니다.</p>
-    <p><b>④ 만 14세 미만 대상자의 제3자가 방문하는 경우</b><br>법정대리인의 위임장 + 법정대리인의 신분증(사본 가능) + 방문 대리인의 신분증 + 법정대리인임을 확인할 수 있는 서류가 필요합니다.</p>
-    <div class="mini">※ 신분증: 주민등록증, 운전면허증, 청소년증, 여권, 공무원증 등 행정기관이 발급한 신분증명서</div>
-    <p><a href="https://www.gne.go.kr/www/minwon/complaints/guide/guide_02.jsp" target="_blank" rel="noopener"><b>경상남도교육청 구비서류·위임장 서식 확인 →</b></a></p>
-  </div></details>
-
-  <details class="faq" data-cat="method"><summary>방문 발급은 어떻게 하나요?</summary><div class="answer">
-    <p>경상남도교육청의 즉시민원은 <b>민원실 접수 → 증명서 작성(민원실·해당부서) → 민원실 교부</b> 순으로 처리됩니다.</p>
-    <p>즉시 발급 대상에는 졸업증명, 검정고시 관련 증명, 폐지학교 제증명, 경력·재직·퇴직·퇴직예정증명, 연수이수확인서, 수상확인서, 실적증명 등이 포함됩니다.</p>
-    <p>본인이 방문하는 경우 신분증을 준비하고, 대리인이 방문하는 경우에는 위의 <b>대리 발급 구비서류</b>를 확인해 주세요.</p>
-  </div></details>
-
-  <details class="faq" data-cat="method"><summary>신분증으로 인정되는 것은 무엇인가요?</summary><div class="answer">
-    <p>경상남도교육청 안내 기준으로 <b>주민등록증, 운전면허증, 청소년증, 여권, 공무원증 등 행정기관이 발급한 신분증명서</b>를 사용할 수 있습니다.</p>
-  </div></details>
-
-  <details class="faq" data-cat="ged"><summary>검정고시 증명서는 어떻게 발급받나요?</summary><div class="answer"><p>검정고시 관련 증명서에는 <b>합격증명서, 성적증명서, 과목합격증명서</b> 등이 있습니다.</p><p>증명서에 따라 인터넷, 방문, FAX, 우편, 무인민원발급기 등을 이용할 수 있습니다. 예를 들어 검정고시 합격증명은 정부24에서 인터넷·방문·FAX·우편·무인발급기 신청이 안내되어 있습니다.</p></div></details>
-
-  <details class="faq" data-cat="closed student" id="faq-closed"><summary>폐교한 학교의 증명서는 어디서 발급받나요?</summary><div class="answer"><p>폐교한 학교의 증명서는 해당 학교의 기록을 보관하고 있는 교육기관을 확인한 후 신청해야 합니다.</p><p>보관기관을 모르거나 발급기관 확인이 필요한 경우 아래 <b>담당부서·문의처 찾기</b>를 이용하거나 경남교육콜센터로 문의해 주세요.</p></div></details>
-
-  <details class="faq" data-cat="method"><summary>다른 지역 학교 증명서도 경남에서 받을 수 있나요?</summary><div class="answer"><p>전국 시·도교육청 민원실 및 학교 행정실 등에서 <b>어디서나 민원(FAX)</b> 방식으로 신청할 수 있는 교육 제증명이 있습니다. 발급하려는 증명서가 대상인지 접수기관에서 확인해 주세요.</p></div></details>
-
-  <details class="faq" data-cat="staff"><summary>교직원 경력·재직 관련 증명서는 어디서 발급하나요?</summary><div class="answer"><p>교육공무원 등의 재직증명서, 경력증명서, 퇴직증명원, 퇴직예정증명원, 수상확인원, 연수이수확인원, 휴직증명서 등이 교육 제증명으로 제공됩니다.</p><p>정부24 온라인 발급 가능 여부 또는 소속·경력기관을 통한 발급방법을 확인해 주세요.</p></div></details>
-
-  <div class="actions">
-    <a class="btn primary" href="https://www.gov.kr" target="_blank" rel="noopener">정부24에서 발급하기</a>
-    <a class="btn" href="/staff-search">담당부서·문의처 찾기</a>
-  </div>
-  <div class="notice"><b>정보 최종 확인: 2026. 8. 30.</b><br>이 페이지는 민원인의 이해를 돕기 위한 안내입니다. 방문·대리발급 구비서류는 경상남도교육청 「즉시민원/유기한민원」 안내를 기준으로 작성했습니다. 개별 증명서의 온라인 발급 가능 여부 등은 정부24 또는 접수·처리기관의 최신 안내를 확인해 주세요.</div>
-  <div class="footer">경상남도교육청 민원상담 1004챗봇 · 교육 제증명 통합 안내</div>
-
-  <div id="certNoResult" class="cert-noresult">검색 결과가 없습니다. 다른 단어로 검색해 보세요.</div>
-<script>
-(function(){
-  const input=document.getElementById('certFaqSearch');
-  const count=document.getElementById('certSearchCount');
-  const noResult=document.getElementById('certNoResult');
-  const faqs=[...document.querySelectorAll('.faq')];
-  const norm=s=>String(s||'').toLowerCase().replace(/\s+/g,'');
-  function run(){
-    const q=norm(input.value);
-    let shown=0;
-    faqs.forEach(f=>{
-      const hit=!q || norm(f.textContent).includes(q);
-      f.classList.toggle('cert-hidden',!hit);
-      if(hit){shown++; if(q) f.open=true;} else {f.open=false;}
-    });
-    if(!q){
-      count.textContent='질문 제목과 답변 내용을 바로 검색할 수 있어요.';
-      noResult.style.display='none';
-    }else{
-      count.textContent='검색 결과 '+shown+'건';
-      noResult.style.display=shown?'none':'block';
-    }
-  }
-  input.addEventListener('input',run); input.addEventListener('search',run); input.addEventListener('change',run); input.addEventListener('search',run); input.addEventListener('change',run);
-})();
-</script>
-
-</main>
-<script>
-const chips=[...document.querySelectorAll('.chip')], faqs=[...document.querySelectorAll('.faq')];
-chips.forEach(btn=>btn.addEventListener('click',()=>{chips.forEach(x=>x.classList.remove('active'));btn.classList.add('active');const c=btn.dataset.cat;faqs.forEach(f=>f.classList.toggle('hidden',c!=='all'&&!f.dataset.cat.split(/\\s+/).includes(c)));}));
-</script>
-</body></html>`);
+ <section id="closed"><h2>폐교학교·기타</h2>
+ <details open><summary>폐교한 학교 증명서가 필요해요.</summary><div class="answer">폐교한 학교의 졸업증명서, 성적증명서, 학교생활기록부 등은 해당 학교의 기록을 보관하고 있는 교육기관에서 발급받을 수 있습니다. 보관기관을 확인한 후 해당 기관으로 신청해 주세요.</div></details>
+ <details><summary>다른 지역 학교 증명서도 발급할 수 있나요?</summary><div class="answer">증명서 종류에 따라 전국 교육기관 방문, FAX 민원 또는 온라인 발급 등을 이용할 수 있습니다. 발급하려는 증명서의 방법을 먼저 확인해 주세요.</div></details>
+ <details><summary>교직원 경력·재직증명서는 어떻게 발급하나요?</summary><div class="answer">교직원 경력증명서·재직증명서 등도 교육 제증명에 포함됩니다. 경력 종류와 근무기관 등에 따라 처리기관이 달라질 수 있습니다.
+ <div class="buttons"><a class="btn light" href="/staff-search">담당부서·문의처 찾기</a></div></div></details>
+ </section>`;
+ res.send(gneGuidePage({
+   title:'교육 제증명 발급 안내',
+   subtitle:'졸업·성적·생활기록부, 검정고시, 교직원 증명서 등 자주 묻는 내용을 확인하세요.',
+   accent:'#5b55d6',
+   tabs:[
+     {id:'online',label:'온라인 발급'},
+     {id:'types',label:'증명서 종류'},
+     {id:'proxy',label:'방문·대리 발급'},
+     {id:'closed',label:'폐교학교·기타'}
+   ],
+   body,
+   sourceUrl:'https://www.gne.go.kr/www/minwon/complaints/guide/guide_02.jsp',
+   sourceLabel:'경남교육청 제증명 발급안내'
+ }));
 });
 
 app.get('/', (req, res) => {
@@ -5382,8 +5286,8 @@ app.get('/csat', (req,res) => {
 });
 
 // 통합 민원안내 허브
-app.get('/guides', (req,res) => res.send(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>민원 통합안내</title>
-<style>body{font-family:-apple-system,BlinkMacSystemFont,"Noto Sans KR","Malgun Gothic",sans-serif;background:#f5f7fb;margin:0;color:#172033}.w{max-width:850px;margin:auto;padding:35px 16px}h1{margin-bottom:6px}.sub{color:#657086;margin-bottom:24px}.g{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}.c{background:white;border-radius:20px;padding:24px;text-decoration:none;color:inherit;box-shadow:0 5px 20px rgba(30,45,80,.07)}.c b{font-size:20px;display:block;margin-bottom:5px}.c span{color:#657086}@media(max-width:600px){.g{grid-template-columns:1fr}}</style></head><body><main class="w"><h1>민원 통합안내</h1><div class="sub">자주 찾는 교육민원 정보를 한곳에서 확인하세요.</div><div class="g">
+app.get('/guides', (req,res) => res.send(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>자주 묻는 질문</title>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,"Noto Sans KR","Malgun Gothic",sans-serif;background:#f5f7fb;margin:0;color:#172033}.w{max-width:850px;margin:auto;padding:35px 16px}h1{margin-bottom:6px}.sub{color:#657086;margin-bottom:24px}.g{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}.c{background:white;border-radius:20px;padding:24px;text-decoration:none;color:inherit;box-shadow:0 5px 20px rgba(30,45,80,.07)}.c b{font-size:20px;display:block;margin-bottom:5px}.c span{color:#657086}@media(max-width:600px){.g{grid-template-columns:1fr}}</style></head><body><main class="w"><h1>자주 묻는 질문</h1><div class="sub">궁금한 교육민원을 빠르게 찾아보세요.</div><div class="g">
 <a class="c" href="/certificates"><b>📄 증명서 발급(제증명)</b><span>온라인·방문·대리발급·폐교학교</span></a>
 <a class="c" href="/transfer"><b>🏫 전·입학</b><span>초·중·고 학교급별 전학 안내</span></a>
 <a class="c" href="/ged"><b>✏️ 검정고시</b><span>접수·응시자격·시험·증명서</span></a>
