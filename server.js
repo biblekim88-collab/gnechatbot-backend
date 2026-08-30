@@ -5064,7 +5064,25 @@ a{color:inherit;text-decoration:none}.wrap{max-width:860px;margin:0 auto;padding
 
   <details class="faq" data-cat="method student" id="faq-fail"><summary>정부24에서 증명서가 발급되지 않아요.</summary><div class="answer"><p>증명서 종류, 졸업연도 또는 전산자료 보유 여부 등에 따라 온라인 발급이 제한될 수 있습니다.</p><p>온라인 발급이 되지 않는 경우 <b>학교·교육청·교육지원청 방문 또는 FAX 민원 등</b> 다른 발급방법을 확인해 주세요. 정확한 발급 가능 여부는 해당 학교 또는 담당기관에 확인하면 가장 정확합니다.</p></div></details>
 
-  <details class="faq" data-cat="method" id="faq-agent"><summary>가족이나 대리인이 대신 발급받을 수 있나요?</summary><div class="answer"><p>증명서와 신청방법에 따라 대리발급 가능 여부와 필요한 서류가 다릅니다. 방문 대리 신청 시에는 일반적으로 <b>신분증, 위임장 등 본인과 대리관계를 확인할 수 있는 서류</b>가 필요할 수 있습니다.</p><p>온라인에서는 대리 신청이 제한되는 민원도 있으므로 신청하려는 증명서의 상세 안내를 먼저 확인해 주세요.</p></div></details>
+  <details class="faq" data-cat="method" id="faq-agent"><summary>가족이나 대리인이 대신 발급받을 수 있나요?</summary><div class="answer">
+    <p>네. 방문 발급은 대상자의 연령과 방문자에 따라 준비서류가 달라집니다.</p>
+    <p><b>① 본인(만 14세 이상)이 방문하는 경우</b><br>본인의 신분증을 준비해 주세요.</p>
+    <p><b>② 만 14세 이상 대상자의 제3자가 방문하는 경우</b><br>위임장 + 제증명 대상자의 신분증(사본 가능) + 방문 대리인의 신분증이 필요합니다.</p>
+    <p><b>③ 만 14세 미만 대상자를 법정대리인이 직접 방문하는 경우</b><br>법정대리인의 신분증 + 법정대리인임을 확인할 수 있는 서류가 필요합니다.</p>
+    <p><b>④ 만 14세 미만 대상자의 제3자가 방문하는 경우</b><br>법정대리인의 위임장 + 법정대리인의 신분증(사본 가능) + 방문 대리인의 신분증 + 법정대리인임을 확인할 수 있는 서류가 필요합니다.</p>
+    <div class="mini">※ 신분증: 주민등록증, 운전면허증, 청소년증, 여권, 공무원증 등 행정기관이 발급한 신분증명서</div>
+    <p><a href="https://www.gne.go.kr/www/minwon/complaints/guide/guide_02.jsp" target="_blank" rel="noopener"><b>경상남도교육청 구비서류·위임장 서식 확인 →</b></a></p>
+  </div></details>
+
+  <details class="faq" data-cat="method"><summary>방문 발급은 어떻게 하나요?</summary><div class="answer">
+    <p>경상남도교육청의 즉시민원은 <b>민원실 접수 → 증명서 작성(민원실·해당부서) → 민원실 교부</b> 순으로 처리됩니다.</p>
+    <p>즉시 발급 대상에는 졸업증명, 검정고시 관련 증명, 폐지학교 제증명, 경력·재직·퇴직·퇴직예정증명, 연수이수확인서, 수상확인서, 실적증명 등이 포함됩니다.</p>
+    <p>본인이 방문하는 경우 신분증을 준비하고, 대리인이 방문하는 경우에는 위의 <b>대리 발급 구비서류</b>를 확인해 주세요.</p>
+  </div></details>
+
+  <details class="faq" data-cat="method"><summary>신분증으로 인정되는 것은 무엇인가요?</summary><div class="answer">
+    <p>경상남도교육청 안내 기준으로 <b>주민등록증, 운전면허증, 청소년증, 여권, 공무원증 등 행정기관이 발급한 신분증명서</b>를 사용할 수 있습니다.</p>
+  </div></details>
 
   <details class="faq" data-cat="ged"><summary>검정고시 증명서는 어떻게 발급받나요?</summary><div class="answer"><p>검정고시 관련 증명서에는 <b>합격증명서, 성적증명서, 과목합격증명서</b> 등이 있습니다.</p><p>증명서에 따라 인터넷, 방문, FAX, 우편, 무인민원발급기 등을 이용할 수 있습니다. 예를 들어 검정고시 합격증명은 정부24에서 인터넷·방문·FAX·우편·무인발급기 신청이 안내되어 있습니다.</p></div></details>
 
@@ -5078,7 +5096,7 @@ a{color:inherit;text-decoration:none}.wrap{max-width:860px;margin:0 auto;padding
     <a class="btn primary" href="https://www.gov.kr" target="_blank" rel="noopener">정부24에서 발급하기</a>
     <a class="btn" href="/staff-search">담당부서·문의처 찾기</a>
   </div>
-  <div class="notice"><b>정보 최종 확인: 2026. 8. 30.</b><br>이 페이지는 민원인의 이해를 돕기 위한 안내입니다. 개별 증명서의 실제 발급 가능 여부·구비서류는 정부24 또는 접수·처리기관의 최신 안내를 확인해 주세요.</div>
+  <div class="notice"><b>정보 최종 확인: 2026. 8. 30.</b><br>이 페이지는 민원인의 이해를 돕기 위한 안내입니다. 방문·대리발급 구비서류는 경상남도교육청 「즉시민원/유기한민원」 안내를 기준으로 작성했습니다. 개별 증명서의 온라인 발급 가능 여부 등은 정부24 또는 접수·처리기관의 최신 안내를 확인해 주세요.</div>
   <div class="footer">경상남도교육청 민원상담 1004챗봇 · 교육 제증명 통합 안내</div>
 </main>
 <script>
@@ -5096,7 +5114,113 @@ async function startServer() {
   // 서버가 외부 요청을 받기 전에 Supabase에 저장된 통계/학습 데이터를 먼저 복구합니다.
   await initSupabasePersistence();
 
-  app.listen(PORT, () => {
+  
+// ===== 민원 통합안내 추가 페이지: 전·입학 / 검정고시 / 수능 =====
+function gneGuidePage({title, subtitle, accent, tabs, body, sourceUrl, sourceLabel}) {
+  const tabHtml = tabs.map(t => `<a class="chip" href="#${t.id}">${t.label}</a>`).join('');
+  return `<!doctype html><html lang="ko"><head><meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>${title} | 경상남도교육청 민원안내</title>
+  <style>
+  *{box-sizing:border-box}body{margin:0;background:#f5f7fb;color:#172033;font-family:-apple-system,BlinkMacSystemFont,"Noto Sans KR","Malgun Gothic",sans-serif;line-height:1.65}
+  .wrap{max-width:920px;margin:auto;padding:24px 16px 64px}.hero{background:white;border-radius:24px;padding:28px;box-shadow:0 8px 30px rgba(30,45,80,.08);border-top:6px solid ${accent}}
+  h1{font-size:28px;margin:0 0 8px}.sub{color:#59657a}.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}.chip{padding:9px 13px;border-radius:999px;background:#eef2f8;color:#24324a;text-decoration:none;font-weight:700;font-size:14px}
+  section{background:white;border-radius:20px;padding:22px;margin-top:16px;box-shadow:0 4px 18px rgba(30,45,80,.05)}h2{font-size:21px;margin:0 0 12px}
+  details{border-top:1px solid #e8ecf3;padding:13px 0}details:first-of-type{border-top:0}summary{cursor:pointer;font-weight:800}.answer{padding:10px 2px 2px;color:#39465b}
+  .notice{background:#f7f9fc;border-radius:14px;padding:13px 15px;margin:12px 0}.buttons{display:flex;flex-wrap:wrap;gap:9px;margin-top:14px}
+  .btn{display:inline-block;text-decoration:none;background:${accent};color:white!important;font-weight:800;padding:11px 15px;border-radius:12px}.btn.light{background:#eef2f8;color:#26344b!important}
+  .small{font-size:13px;color:#68758a}.warn{font-weight:800;color:#9a4d00}.step{padding-left:20px}a{color:#2459b8}
+  @media(max-width:520px){h1{font-size:24px}.hero{padding:22px}section{padding:18px}}
+  </style></head><body><main class="wrap"><div class="hero"><h1>${title}</h1><div class="sub">${subtitle}</div><div class="chips">${tabHtml}</div></div>
+  ${body}
+  <section><h2>공식 안내 확인</h2><p>세부 자격·일정·제출서류는 해당 연도 시행계획과 공식 안내가 우선합니다.</p><div class="buttons">
+  <a class="btn" href="${sourceUrl}" target="_blank" rel="noopener">${sourceLabel}</a><a class="btn light" href="/staff-search">담당부서·문의처 찾기</a></div></section>
+  </main></body></html>`;
+}
+
+app.get('/transfer', (req,res) => {
+ const body = `
+ <section id="elementary"><h2>초등학교 전학</h2>
+ <details open><summary>초등학교 전학은 어떻게 하나요?</summary><div class="answer">거주지를 이전한 뒤 지역 주민센터(읍·면·동)에 전입신고를 하고 <b>초등학교 배정 신청</b>을 합니다. 배정과 통학구역은 주소지를 기준으로 확인합니다.</div></details>
+ <details><summary>어느 학교로 배정되는지 알고 싶어요.</summary><div class="answer">초등학교는 통학구역에 따라 배정되므로 주소지의 학구를 확인해야 합니다. 경남교육청 전입학 안내의 <b>학구도 안내</b>에서 확인할 수 있습니다.</div></details>
+ </section>
+ <section id="middle"><h2>중학교 전학</h2>
+ <details open><summary>중학교 전학은 어디에 신청하나요?</summary><div class="answer"><b>주소지 관할 교육지원청</b>에서 배정합니다. 지역별 전입학 담당부서와 전화번호는 경남교육청 전입학 안내에서 확인할 수 있습니다.</div></details>
+ <details><summary>다른 시·군으로 이사하는 경우도 같나요?</summary><div class="answer">전입할 주소지의 관할 교육지원청에 배정 절차와 필요서류를 확인하는 것이 가장 정확합니다.</div></details>
+ </section>
+ <section id="high"><h2>고등학교 전학</h2>
+ <details open><summary>고등학교 전학의 기본 요건은 무엇인가요?</summary><div class="answer">2026학년도 경남 지침은 원칙적으로 <b>전 가족이 단독세대를 구성하여 타 학군(지역)으로 거주지를 이전한 경우</b>를 전입학 대상으로 안내합니다. 다만 예외사유와 추가서류가 있으므로 개별 상황은 지침을 확인해야 합니다.</div></details>
+ <details><summary>평준화지역은 어떻게 신청하나요?</summary><div class="answer"><ol class="step"><li>거주지 이전</li><li>전출교에서 배정원서 작성</li><li>배정원서와 관련서류를 경상남도교육청에 방문 또는 팩스로 접수</li><li>배정 결과 확인</li></ol><div class="notice">공통서류: 배정원서, 주민등록등본(행정정보 공동이용 시 미제출 가능), 개인정보 수집·이용 동의서 등</div></div></details>
+ <details><summary>부모 중 한 명이 함께 이전하지 못해요.</summary><div class="answer">부 또는 모가 불가피하게 함께 이전할 수 없는 경우에는 사유별 <b>추가 제출서류</b>가 필요합니다. 임의로 판단하기보다 경남교육청 고등학교 전입학 지침의 해당 사유를 확인해 주세요.</div></details>
+ <details><summary>비평준화지역 고등학교로 전학하고 싶어요.</summary><div class="answer">비평준화지역은 희망 학교의 결원 및 전입학 가능 여부 등 학교별 확인이 필요하므로 <b>전학을 희망하는 학교에 먼저 문의</b>하는 것이 정확합니다.</div></details>
+ </section>
+ <section id="special"><h2>특별한 경우</h2>
+ <details><summary>거주지 이전 없이 전학할 수 있나요?</summary><div class="answer">일반적인 전입학은 거주지 이전을 기본으로 하지만, 지침에서 정한 별도 사유가 적용되는 경우가 있습니다. 진로변경 전입학 등은 별도 일정·대상·요건이 있으므로 해당 메뉴와 시행계획을 확인해 주세요.</div></details>
+ <div class="notice small">※ 학교급·지역·평준화 여부·가족 이전 상황에 따라 절차가 달라질 수 있습니다.</div></section>`;
+ res.send(gneGuidePage({title:'전·입학 안내',subtitle:'초·중·고 학교급별 전학 절차를 한눈에 확인하세요.',accent:'#5b55d6',
+ tabs:[{id:'elementary',label:'초등학교'},{id:'middle',label:'중학교'},{id:'high',label:'고등학교'},{id:'special',label:'특별한 경우'}],body,
+ sourceUrl:'https://www.gne.go.kr/www/chamyeo/admission/emschool.jsp',sourceLabel:'경남교육청 전입학 안내'}));
+});
+
+app.get('/ged', (req,res) => {
+ const body = `
+ <section id="apply"><h2>원서접수</h2>
+ <details open><summary>검정고시는 언제 접수하나요?</summary><div class="answer">검정고시는 회차별 시행계획에서 <b>현장접수와 온라인접수 기간</b>을 공고합니다. 접수기간은 매회 달라질 수 있으므로 최신 공고를 확인해 주세요.</div></details>
+ <details><summary>어디에서 접수하나요?</summary><div class="answer">2026년도 제2회 기준 현장접수처는 <b>경상남도교육청, 진주·김해·통영·거제교육지원청</b>이었습니다. 온라인접수도 운영되며, 매회 공고에서 접수처와 방법을 다시 확인해야 합니다.</div></details>
+ <details><summary>온라인접수할 때 주의할 점이 있나요?</summary><div class="answer">온라인 접수는 현장접수보다 마감일이 빠를 수 있습니다. 2026년도 제2회 공고는 마지막 단계에서 반드시 <b>[제출]</b> 버튼까지 클릭해야 접수가 완료된다고 안내했습니다.</div></details>
+ </section>
+ <section id="eligibility"><h2>응시자격·서류</h2>
+ <details open><summary>제가 응시할 수 있는지 알고 싶어요.</summary><div class="answer">초졸·중졸·고졸별 응시자격과 제한사항이 다르므로 해당 회차 <b>시행계획 공고의 응시자격</b>을 확인해야 합니다. 개인 학력·재학/제적 시점에 따라 달라질 수 있어 단순히 나이만으로 판단하기 어렵습니다.</div></details>
+ <details><summary>대리접수가 가능한가요?</summary><div class="answer">가능한 경우가 있으나 응시자 연령과 대리인 유형에 따라 <b>위임장, 대리인 신분증, 응시자 신분증 사본, 법정대리인 입증서류</b> 등이 필요할 수 있습니다. 반드시 해당 회차 공고의 대리접수 구비서류를 확인해 주세요.</div></details>
+ <details><summary>현장접수 때 신분증 사진으로 대신할 수 있나요?</summary><div class="answer">아니요. 2026년도 제2회 공고는 <b>휴대전화 등으로 촬영한 신분증 사진은 인정하지 않는다</b>고 안내합니다. 주민등록번호 뒷자리가 없는 여권은 여권정보증명서를 함께 준비해야 합니다.</div></details>
+ </section>
+ <section id="exam"><h2>시험·합격발표</h2>
+ <details open><summary>시험일과 시험장은 어디서 확인하나요?</summary><div class="answer">시험일, 시험장소 공고일, 합격자 발표일은 회차별 시행계획에 공고됩니다. 시험장소는 별도 공고될 수 있으므로 접수 후 경남교육청 <b>시험정보 → 검정고시</b> 게시판을 다시 확인해 주세요.</div></details>
+ </section>
+ <section id="certificate"><h2>합격 후 증명서</h2>
+ <details open><summary>합격·성적증명서는 어디서 발급하나요?</summary><div class="answer">검정고시 합격증명서, 성적증명서, 과목합격증명서 등은 교육 제증명에 해당합니다. 발급방법과 대리발급 안내는 <a href="/certificates"><b>교육 제증명 통합안내</b></a>에서 확인해 주세요.</div></details>
+ </section>`;
+ res.send(gneGuidePage({title:'검정고시 안내',subtitle:'원서접수부터 시험·합격증명서까지 자주 묻는 내용을 모았습니다.',accent:'#1e8a65',
+ tabs:[{id:'apply',label:'원서접수'},{id:'eligibility',label:'응시자격·서류'},{id:'exam',label:'시험·합격발표'},{id:'certificate',label:'증명서'}],body,
+ sourceUrl:'https://www.gne.go.kr/www/na/ntt/selectNttList.do?mi=12627&bbsId=1255',sourceLabel:'경남교육청 검정고시 공고'}));
+});
+
+app.get('/csat', (req,res) => {
+ const body = `
+ <section id="place"><h2>접수대상·접수처</h2>
+ <details open><summary>수능 원서는 어디에서 접수하나요?</summary><div class="answer"><b>재학생은 재학 중인 고등학교, 졸업생은 출신 고등학교</b>가 기본 접수처입니다. 졸업생은 출신학교 소재지와 현재 주민등록상 주소지가 다른 시·도 또는 도내 다른 시험장지역인 경우 등 허용되는 범위에서 별도 접수가 가능하므로 해당 연도 안내를 확인해 주세요.</div></details>
+ <details><summary>검정고시 합격자는 어디서 접수하나요?</summary><div class="answer">검정고시 합격자 등 학교 접수가 아닌 대상자는 주민등록상 주소지 등을 기준으로 지정된 시험지구 접수처를 이용하게 됩니다. 정확한 접수처는 해당 연도 경남교육청 수능 원서접수 안내에서 확인해 주세요.</div></details>
+ </section>
+ <section id="online"><h2>온라인 사전입력</h2>
+ <details open><summary>온라인으로만 원서접수를 끝낼 수 있나요?</summary><div class="answer"><b>아니요.</b> 2027학년도 경남 안내 기준 온라인 사전입력 후에도 정해진 기한까지 <b>현장 접수처를 방문하여 접수를 완료</b>해야 합니다.</div></details>
+ <details><summary>2027학년도 접수기간은 언제인가요?</summary><div class="answer">응시원서 접수·변경은 <b>2026. 8. 24.(월)~9. 4.(금) 09:00~17:00</b>이며 토요일·공휴일은 제외됩니다. 온라인 사전입력은 <b>8. 20.(목)~9. 3.(목) 18:00</b>까지입니다.<div class="notice warn">※ 일정은 학년도마다 달라지므로 이후에는 반드시 최신 공고를 확인하세요.</div></div></details>
+ </section>
+ <section id="docs"><h2>준비서류·대리접수</h2>
+ <details open><summary>대리접수가 가능한가요?</summary><div class="answer">수능 원서접수는 <b>응시자 본인이 직접 접수하는 것이 원칙</b>입니다. 다만 공식 지침에서 정한 대상자에 한해 직계가족·배우자 등에 의한 대리접수가 허용될 수 있으며, 대상과 구비서류가 엄격하게 정해져 있습니다. 해당 학년도 대리접수 안내와 서약서를 반드시 확인해 주세요.</div></details>
+ <details><summary>준비서류는 어디서 확인하나요?</summary><div class="answer">재학생·졸업생·검정고시 합격자 등 대상별 준비서류가 다르며, 대리접수는 별도 서류가 추가됩니다. 아래 공식 원서접수 안내의 첨부자료를 확인해 주세요.</div></details>
+ </section>
+ <section id="fee"><h2>응시수수료</h2>
+ <details open><summary>2027학년도 응시수수료는 얼마인가요?</summary><div class="answer">선택 영역 수에 따라 <b>4개 영역 이하 37,000원 / 5개 영역 42,000원 / 6개 영역 47,000원</b>입니다. 납부방법은 접수처와 온라인 사전입력 사용 여부 등에 따라 안내를 확인해 주세요.</div></details>
+ </section>
+ <section id="result"><h2>시험·성적</h2>
+ <details open><summary>수능 일정이나 성적 관련 정보는 어디서 확인하나요?</summary><div class="answer">시험 시행일, 수험표, 시험장, 성적통지 및 성적증명 관련 사항은 해당 학년도 수능 시행계획과 경남교육청 공지를 확인해 주세요. 연도별로 변동되는 내용은 이 페이지보다 공식 공고가 우선합니다.</div></details>
+ </section>`;
+ res.send(gneGuidePage({title:'대학수학능력시험 안내',subtitle:'원서접수·접수처·대리접수 등 수능 민원을 빠르게 확인하세요.',accent:'#315ca8',
+ tabs:[{id:'place',label:'접수처'},{id:'online',label:'온라인 사전입력'},{id:'docs',label:'서류·대리접수'},{id:'fee',label:'수수료'},{id:'result',label:'시험·성적'}],body,
+ sourceUrl:'https://www.gne.go.kr/user/bbs/BD_selectBbs.do?q_bbsDocNo=20260727113531225&q_bbsSn=1256',sourceLabel:'2027학년도 수능 원서접수 안내'}));
+});
+
+// 통합 민원안내 허브
+app.get('/guides', (req,res) => res.send(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>민원 통합안내</title>
+<style>body{font-family:-apple-system,BlinkMacSystemFont,"Noto Sans KR","Malgun Gothic",sans-serif;background:#f5f7fb;margin:0;color:#172033}.w{max-width:850px;margin:auto;padding:35px 16px}h1{margin-bottom:6px}.sub{color:#657086;margin-bottom:24px}.g{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}.c{background:white;border-radius:20px;padding:24px;text-decoration:none;color:inherit;box-shadow:0 5px 20px rgba(30,45,80,.07)}.c b{font-size:20px;display:block;margin-bottom:5px}.c span{color:#657086}@media(max-width:600px){.g{grid-template-columns:1fr}}</style></head><body><main class="w"><h1>민원 통합안내</h1><div class="sub">자주 찾는 교육민원 정보를 한곳에서 확인하세요.</div><div class="g">
+<a class="c" href="/certificates"><b>📄 증명서 발급(제증명)</b><span>온라인·방문·대리발급·폐교학교</span></a>
+<a class="c" href="/transfer"><b>🏫 전·입학</b><span>초·중·고 학교급별 전학 안내</span></a>
+<a class="c" href="/ged"><b>✏️ 검정고시</b><span>접수·응시자격·시험·증명서</span></a>
+<a class="c" href="/csat"><b>🎓 대학수학능력시험</b><span>원서접수·접수처·대리접수</span></a>
+</div></main></body></html>`));
+
+
+app.listen(PORT, () => {
   console.log(`서버 실행 중: http://localhost:${PORT}`);
   if (ADMIN_TOKEN === 'change-me') {
     console.log('⚠ ADMIN_TOKEN 환경변수를 설정하지 않으면 기본값(change-me)이 사용됩니다. 꼭 바꿔주세요.');
