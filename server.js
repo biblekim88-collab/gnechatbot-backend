@@ -2871,6 +2871,19 @@ function trackQuery(query, matchedTitle, matched, source, visitorId, interaction
   writeJson(QUERIES_PATH, list);
 }
 
+// 방문자ID를 표시용으로 일부만 보여줍니다. "kakao:실제ID"처럼 출처 접두사가 붙어있으면
+// 접두사는 그대로 두고 실제 ID 쪽에서 앞 6자만 보여줘야 서로 구분이 됩니다.
+function maskVisitorId(id) {
+  const s = String(id || '');
+  const idx = s.indexOf(':');
+  if (idx > -1 && idx < 12) {
+    const prefix = s.slice(0, idx + 1);
+    const rest = s.slice(idx + 1);
+    return prefix + rest.slice(0, 6) + '…';
+  }
+  return s.slice(0, 6) + '…';
+}
+
 function requireAdmin(req, res, next) {
   // 대시보드 fetch는 헤더로, CSV 다운로드/링크 클릭은 쿼리스트링(?token=)으로 넘어올 수 있어 둘 다 허용합니다.
   const given = (req.header('x-admin-token') || req.query.token || '').toString().trim();
@@ -4431,7 +4444,7 @@ app.get('/api/admin/session-paths', requireAdmin, (req, res) => {
     const flush = () => {
       if (current.length >= minHops) {
         sessions.push({
-          visitorId: visitorId.slice(0, 6) + '…', // 방문자 식별자는 일부만 노출합니다.
+          visitorId: maskVisitorId(visitorId), // 방문자 식별자는 일부만 노출합니다.
           start: current[0].dateTime,
           end: current[current.length - 1].dateTime,
           hops: current.length,
@@ -4450,6 +4463,61 @@ app.get('/api/admin/session-paths', requireAdmin, (req, res) => {
   sessions.sort((a, b) => (a.end < b.end ? 1 : -1));
   const limit = Math.min(Math.max(Number(req.query.limit) || 200, 20), 1000);
   res.json({ total: sessions.length, period, sessions: sessions.slice(0, limit) });
+});
+
+// 방문자ID별로 총 질문수·매칭률·처음~마지막 이용시각·자주 물어본 항목을 집계합니다.
+// 카카오톡 안에서는 사용자ID가 고정되어 잘 잡히지만, 웹 챗봇 등 접속 경로가 다르면
+// 같은 사람이라도 별도 방문자ID로 잡혀 하나로 합쳐지지 않을 수 있습니다.
+app.get('/api/admin/visitors', requireAdmin, (req, res) => {
+  const list = readJson(QUERIES_PATH, []);
+  const period = getAdminPeriod(req.query);
+  const q = String(req.query.q || '').trim().toLowerCase();
+
+  const byVisitor = new Map();
+  list.forEach(e => {
+    const visitorId = String(e.visitorId || '').trim();
+    if (!visitorId) return;
+    const dt = toKstDateTimeParts(e.time);
+    if (period.from && dt.date < period.from) return;
+    if (period.to && dt.date > period.to) return;
+    const t = new Date(e.time).getTime();
+    if (!Number.isFinite(t)) return;
+
+    if (!byVisitor.has(visitorId)) {
+      byVisitor.set(visitorId, { visitorId, total: 0, matched: 0, firstT: t, lastT: t, dates: new Set(), topicCounts: new Map() });
+    }
+    const v = byVisitor.get(visitorId);
+    v.total += 1;
+    if (e.matched) v.matched += 1;
+    if (t < v.firstT) v.firstT = t;
+    if (t > v.lastT) v.lastT = t;
+    v.dates.add(dt.date);
+    const topic = String(e.currentBlock || e.matchedTitle || '').trim();
+    if (topic) v.topicCounts.set(topic, (v.topicCounts.get(topic) || 0) + 1);
+  });
+
+  let rows = Array.from(byVisitor.values()).map(v => {
+    const topTopics = Array.from(v.topicCounts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([name, count]) => name + '(' + count + ')');
+    return {
+      visitorId: maskVisitorId(v.visitorId),
+      total: v.total,
+      matched: v.matched,
+      matchRate: v.total ? Math.round((v.matched / v.total) * 100) : 0,
+      activeDays: v.dates.size,
+      first: toKstDateTimeParts(new Date(v.firstT).toISOString()).dateTime,
+      last: toKstDateTimeParts(new Date(v.lastT).toISOString()).dateTime,
+      topTopics: topTopics.join(', ')
+    };
+  });
+
+  if (q) rows = rows.filter(r => (r.visitorId + ' ' + r.topTopics).toLowerCase().includes(q));
+  rows.sort((a, b) => b.total - a.total);
+
+  const limit = Math.min(Math.max(Number(req.query.limit) || 300, 20), 2000);
+  res.json({ total: rows.length, period, visitors: rows.slice(0, limit) });
 });
 
 app.get('/api/admin/questions', requireAdmin, (req, res) => {
@@ -4793,6 +4861,24 @@ app.get('/admin', (req, res) => {
     </div>
 
     <div class="card collapsed">
+      <h2>방문자별 이용 현황 <span class="hdrRight"><span class="chev">▾</span></span></h2>
+      <div class="cardBody">
+      <div class="small muted">방문자ID(카카오 사용자ID 등)별로 총 질문수·매칭률·자주 물어본 항목을 모아 보여줍니다. 접속 경로가 다르면(예: 카카오톡과 웹챗봇을 각각 이용) 같은 사람이어도 별도 방문자로 잡힐 수 있어요.</div>
+      <div class="row gap">
+        <input id="visitorSearch" type="text" placeholder="방문자ID 또는 자주 물어본 항목 검색" style="flex:1;min-width:180px;height:38px">
+        <button id="visitorFilterBtn" class="ghost" style="height:38px">조회</button>
+      </div>
+      <div class="small muted gap" id="visitorMeta"></div>
+      <div style="overflow-x:auto" class="gap">
+        <table id="visitorTable">
+          <thead><tr><th>방문자</th><th>총 질문수</th><th>매칭률</th><th>활동일수</th><th>첫 이용</th><th>마지막 이용</th><th>자주 물어본 항목</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      </div>
+    </div>
+
+    <div class="card collapsed">
       <h2>전체 질문 내역 <span class="hdrRight"><a class="dl" id="questionsCsv" href="#">전체 CSV 다운로드</a><span class="chev">▾</span></span></h2>
       <div class="cardBody">
       <div class="small muted">시작일~종료일을 지정해 기간별로 조회할 수 있고, 테스트 질문은 건별 또는 조회기간 전체를 삭제할 수 있어요.</div>
@@ -4936,7 +5022,30 @@ function syncSectionPeriodsFromStats(){
 
 async function loadAll(){
   BLOCKS = await api('/api/admin/blocks');
-  await Promise.all([loadStats(), loadQuestions(), loadMissed(), loadMissedDetail(), loadLearned(), loadSessionPaths()]);
+  await Promise.all([loadStats(), loadQuestions(), loadMissed(), loadMissedDetail(), loadLearned(), loadSessionPaths(), loadVisitors()]);
+}
+
+async function loadVisitors(){
+  const from = document.getElementById('questionFrom').value || '';
+  const to = document.getElementById('questionTo').value || '';
+  const q = document.getElementById('visitorSearch').value.trim();
+  const params = new URLSearchParams({ limit: '300' });
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
+  if (q) params.set('q', q);
+  const d = await api('/api/admin/visitors?' + params.toString());
+  document.getElementById('visitorMeta').textContent = '전체 ' + d.total + '명 (상위 ' + (d.visitors||[]).length + '명 표시, 질문수 많은 순)';
+  document.querySelector('#visitorTable tbody').innerHTML = (d.visitors||[]).map(v=>
+    '<tr>'+
+      '<td>'+esc(v.visitorId)+'</td>'+
+      '<td>'+esc(v.total)+'</td>'+
+      '<td>'+esc(v.matchRate)+'%</td>'+
+      '<td>'+esc(v.activeDays)+'</td>'+
+      '<td class="small muted">'+esc(v.first)+'</td>'+
+      '<td class="small muted">'+esc(v.last)+'</td>'+
+      '<td class="small muted">'+esc(v.topTopics||'-')+'</td>'+
+    '</tr>'
+  ).join('') || '<tr><td colspan="7" class="muted">해당 조건의 방문자가 없어요.</td></tr>';
 }
 
 async function loadSessionPaths(){
@@ -5171,8 +5280,9 @@ document.getElementById('deletePeriodRecordsBtn').addEventListener('click', asyn
   await loadAll();
 });
 
-document.getElementById('questionFilterBtn').addEventListener('click', ()=>{ QUESTION_PAGE=1; loadQuestions(); loadSessionPaths(); });
-document.getElementById('questionResetBtn').addEventListener('click', ()=>{ document.getElementById('questionFrom').value=''; document.getElementById('questionTo').value=''; document.getElementById('questionSearch').value=''; QUESTION_PAGE=1; loadQuestions(); loadSessionPaths(); });
+document.getElementById('questionFilterBtn').addEventListener('click', ()=>{ QUESTION_PAGE=1; loadQuestions(); loadSessionPaths(); loadVisitors(); });
+document.getElementById('visitorFilterBtn').addEventListener('click', ()=>{ loadVisitors(); });
+document.getElementById('questionResetBtn').addEventListener('click', ()=>{ document.getElementById('questionFrom').value=''; document.getElementById('questionTo').value=''; document.getElementById('questionSearch').value=''; QUESTION_PAGE=1; loadQuestions(); loadSessionPaths(); loadVisitors(); });
 document.getElementById('questionDeletePeriodBtn').addEventListener('click', async ()=>{
   const from = document.getElementById('questionFrom').value || '';
   const to = document.getElementById('questionTo').value || '';
