@@ -4395,6 +4395,63 @@ app.delete('/api/admin/missed-detail', requireAdmin, (req, res) => {
 });
 
 // 전체 질문 상세 내역: 날짜(KST)·검색어 필터 + 페이지 이동
+// 방문자(visitorId)별로 시간순 정렬한 뒤, 30분 이상 공백이 생기면 새 세션으로 나눠서
+// "어떤 블록을 타고 이동했는지" 경로를 재구성합니다. 블록 정보가 없는(스킬 미연결) 구간은
+// 로그 자체가 없어 경로에서 비어 보일 수 있습니다.
+const SESSION_GAP_MS = 30 * 60 * 1000;
+
+app.get('/api/admin/session-paths', requireAdmin, (req, res) => {
+  const list = readJson(QUERIES_PATH, []);
+  const period = getAdminPeriod(req.query);
+  const minHops = Math.max(Number(req.query.minHops) || 2, 1);
+
+  const byVisitor = new Map();
+  list.forEach((e, idx) => {
+    const visitorId = String(e.visitorId || '').trim();
+    if (!visitorId) return; // 방문자 식별자가 없으면 세션으로 묶을 수 없어 제외합니다.
+    const dt = toKstDateTimeParts(e.time);
+    if (period.from && dt.date < period.from) return;
+    if (period.to && dt.date > period.to) return;
+    const t = new Date(e.time).getTime();
+    if (!Number.isFinite(t)) return;
+    if (!byVisitor.has(visitorId)) byVisitor.set(visitorId, []);
+    byVisitor.get(visitorId).push({
+      idx, t, dateTime: dt.dateTime,
+      block: e.currentBlock || e.matchedTitle || '',
+      query: e.query || e.buttonText || '',
+      inputType: e.inputType || '',
+      matched: !!e.matched
+    });
+  });
+
+  const sessions = [];
+  byVisitor.forEach((entries, visitorId) => {
+    entries.sort((a, b) => a.t - b.t);
+    let current = [];
+    const flush = () => {
+      if (current.length >= minHops) {
+        sessions.push({
+          visitorId: visitorId.slice(0, 6) + '…', // 방문자 식별자는 일부만 노출합니다.
+          start: current[0].dateTime,
+          end: current[current.length - 1].dateTime,
+          hops: current.length,
+          path: current.map(c => ({ block: c.block, query: c.query, time: c.dateTime, matched: c.matched }))
+        });
+      }
+      current = [];
+    };
+    entries.forEach(e => {
+      if (current.length && (e.t - current[current.length - 1].t) > SESSION_GAP_MS) flush();
+      current.push(e);
+    });
+    flush();
+  });
+
+  sessions.sort((a, b) => (a.end < b.end ? 1 : -1));
+  const limit = Math.min(Math.max(Number(req.query.limit) || 200, 20), 1000);
+  res.json({ total: sessions.length, period, sessions: sessions.slice(0, limit) });
+});
+
 app.get('/api/admin/questions', requireAdmin, (req, res) => {
   const list = readJson(QUERIES_PATH, []);
   const q = String(req.query.q || '').trim().toLowerCase();
@@ -4710,6 +4767,17 @@ app.get('/admin', (req, res) => {
     </div>
 
     <div class="card">
+      <h2>사용자 세션별 이동 경로</h2>
+      <div class="small muted">같은 방문자가 30분 이내에 이어서 누른 블록들을 하나의 세션으로 묶어 이동 경로를 보여줍니다. 스킬이 연결된 블록끼리만 경로에 나타나며, 최소 2단계 이상 이동한 세션만 표시합니다.</div>
+      <div style="overflow-x:auto" class="gap">
+        <table id="sessionPathTable">
+          <thead><tr><th>방문자</th><th>세션 시작</th><th>세션 종료</th><th>이동 경로</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
       <h2>전체 질문 내역 <a class="dl" id="questionsCsv" href="#">전체 CSV 다운로드</a></h2>
       <div class="small muted">시작일~종료일을 지정해 기간별로 조회할 수 있고, 테스트 질문은 건별 또는 조회기간 전체를 삭제할 수 있어요.</div>
       <div class="row gap">
@@ -4838,7 +4906,24 @@ function syncSectionPeriodsFromStats(){
 
 async function loadAll(){
   BLOCKS = await api('/api/admin/blocks');
-  await Promise.all([loadStats(), loadQuestions(), loadMissed(), loadMissedDetail(), loadLearned()]);
+  await Promise.all([loadStats(), loadQuestions(), loadMissed(), loadMissedDetail(), loadLearned(), loadSessionPaths()]);
+}
+
+async function loadSessionPaths(){
+  const from = document.getElementById('questionFrom').value || '';
+  const to = document.getElementById('questionTo').value || '';
+  const params = new URLSearchParams({ limit: '200', minHops: '2' });
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
+  const d = await api('/api/admin/session-paths?' + params.toString());
+  document.querySelector('#sessionPathTable tbody').innerHTML = (d.sessions||[]).map(s=>
+    '<tr>'+
+      '<td>'+esc(s.visitorId)+'</td>'+
+      '<td>'+esc(s.start)+'</td>'+
+      '<td>'+esc(s.end)+'</td>'+
+      '<td>'+s.path.map(p => esc(p.block || p.query || '(블록 미상)')).join(' <span class="muted">→</span> ')+'</td>'+
+    '</tr>'
+  ).join('') || '<tr><td colspan="4" class="muted">2단계 이상 이어진 세션이 아직 없어요. 여러 블록에 스킬이 연결될수록 더 많이 잡혀요.</td></tr>';
 }
 
 async function loadStats(){
@@ -5056,8 +5141,8 @@ document.getElementById('deletePeriodRecordsBtn').addEventListener('click', asyn
   await loadAll();
 });
 
-document.getElementById('questionFilterBtn').addEventListener('click', ()=>{ QUESTION_PAGE=1; loadQuestions(); });
-document.getElementById('questionResetBtn').addEventListener('click', ()=>{ document.getElementById('questionFrom').value=''; document.getElementById('questionTo').value=''; document.getElementById('questionSearch').value=''; QUESTION_PAGE=1; loadQuestions(); });
+document.getElementById('questionFilterBtn').addEventListener('click', ()=>{ QUESTION_PAGE=1; loadQuestions(); loadSessionPaths(); });
+document.getElementById('questionResetBtn').addEventListener('click', ()=>{ document.getElementById('questionFrom').value=''; document.getElementById('questionTo').value=''; document.getElementById('questionSearch').value=''; QUESTION_PAGE=1; loadQuestions(); loadSessionPaths(); });
 document.getElementById('questionDeletePeriodBtn').addEventListener('click', async ()=>{
   const from = document.getElementById('questionFrom').value || '';
   const to = document.getElementById('questionTo').value || '';
