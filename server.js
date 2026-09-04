@@ -2386,17 +2386,40 @@ function buildKakaoButtonsFromScenarioButtons(buttons) {
 // scenarios.json의 블록 하나(원래 오픈빌더 응답)를 카카오 스킬 응답 outputs로 재구성합니다.
 // 메시지 + 버튼을 basicCard 하나로 묶어서, 텍스트카드와 버튼카드가 따로 나가던 기존 방식보다
 // 원본 카드형 응답에 훨씬 가깝게 보이도록 합니다.
+// 카드형 응답이 연속으로 2개 이상이면(예: 종합 안내 + 구비서류) 세로로 따로 나가지 않도록
+// 캐러셀(가로 스와이프) 하나로 묶어서 보여줍니다.
 function buildKakaoOutputsFromScenarioBlock(block) {
-  const outputs = [];
+  const items = [];
   (block.responses || []).forEach(r => {
     const message = String(r.message || '').trim();
     const buttons = buildKakaoButtonsFromScenarioButtons(r.buttons || []);
     if (buttons.length) {
-      outputs.push({ basicCard: { description: message || ' ', buttons } });
+      items.push({ kind: 'card', basicCard: { description: message || ' ', buttons } });
     } else if (message) {
-      outputs.push({ simpleText: { text: message } });
+      items.push({ kind: 'text', simpleText: { text: message } });
     }
   });
+
+  const outputs = [];
+  let i = 0;
+  while (i < items.length) {
+    if (items[i].kind === 'card') {
+      const cards = [];
+      while (i < items.length && items[i].kind === 'card') {
+        cards.push(items[i].basicCard);
+        i++;
+      }
+      // 카카오 캐러셀은 최소 2개부터 지원하므로, 카드가 1개면 그냥 basicCard로 둡니다.
+      if (cards.length >= 2) {
+        outputs.push({ carousel: { type: 'basicCard', items: cards.slice(0, 10) } });
+      } else {
+        outputs.push({ basicCard: cards[0] });
+      }
+    } else {
+      outputs.push({ simpleText: items[i].simpleText });
+      i++;
+    }
+  }
   return outputs;
 }
 
