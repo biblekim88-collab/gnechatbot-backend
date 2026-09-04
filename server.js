@@ -4695,6 +4695,11 @@ app.get('/admin', (req, res) => {
   .gap{margin-top:10px}
   #gate{max-width:360px;margin:60px auto}
   a.dl{font-size:12px;color:#1b5dbf;text-decoration:none;font-weight:700}
+  .card h2{cursor:pointer;user-select:none}
+  .hdrRight{display:flex;align-items:center;gap:8px}
+  .chev{display:inline-block;font-size:11px;color:#999;transition:transform .15s ease}
+  .card.collapsed .chev{transform:rotate(-90deg)}
+  .card.collapsed .cardBody{display:none}
 </style>
 </head>
 <body>
@@ -4712,7 +4717,8 @@ app.get('/admin', (req, res) => {
     <h1>경상남도교육청 민원 챗봇 관리자 대시보드 <button class="ghost" id="logoutBtn" style="height:32px;padding:0 10px;font-size:12px">로그아웃</button></h1>
 
     <div class="card">
-      <h2>기간별 통계 <button class="ghost" id="refreshBtn" style="height:32px;padding:0 10px;font-size:12px">새로고침</button></h2>
+      <h2>기간별 통계 <span class="hdrRight"><button class="ghost" id="refreshBtn" style="height:32px;padding:0 10px;font-size:12px">새로고침</button><span class="chev">▾</span></span></h2>
+      <div class="cardBody">
       <div class="small muted">한국시간(KST) 기준입니다. 날짜를 직접 지정하거나 주간·월간·연간 버튼으로 빠르게 조회할 수 있어요.</div>
       <div class="row gap" style="align-items:center">
         <input id="statsFrom" type="date" style="height:38px;border:1px solid #cfd6dd;border-radius:9px;padding:0 9px">
@@ -4730,10 +4736,12 @@ app.get('/admin', (req, res) => {
       </div>
       <div class="summary4 gap" id="summary4"></div>
       <div class="gap small muted" id="statsMeta"></div>
+      </div>
     </div>
 
-    <div class="card">
-      <h2>조회기간 일별 통계 <a class="dl" id="dailyCsv" href="#">CSV 다운로드</a></h2>
+    <div class="card collapsed">
+      <h2>조회기간 일별 통계 <span class="hdrRight"><a class="dl" id="dailyCsv" href="#">CSV 다운로드</a><span class="chev">▾</span></span></h2>
+      <div class="cardBody">
       <div class="small muted">선택한 기간 안에서 질문이 있었던 날짜만 표시합니다.</div>
       <div style="overflow-x:auto" class="gap">
         <table id="dailyTable">
@@ -4741,10 +4749,12 @@ app.get('/admin', (req, res) => {
           <tbody></tbody>
         </table>
       </div>
+      </div>
     </div>
 
-    <div class="card">
-      <h2>입력 방식 · 버튼 이용</h2>
+    <div class="card collapsed">
+      <h2>입력 방식 · 버튼 이용 <span class="hdrRight"><span class="chev">▾</span></span></h2>
+      <div class="cardBody">
       <div class="summary4" id="inputSummary"></div>
       <div class="small muted gap">카카오 스킬 요청의 Trigger Type을 기준으로 직접입력과 버튼클릭을 구분합니다. 기존 기록 중 Trigger Type이 없던 데이터는 '기록없음'으로 표시됩니다.</div>
       <div style="overflow-x:auto" class="gap">
@@ -4753,10 +4763,12 @@ app.get('/admin', (req, res) => {
           <tbody></tbody>
         </table>
       </div>
+      </div>
     </div>
 
-    <div class="card">
-      <h2>Render에서 확인된 카카오 블록 흐름</h2>
+    <div class="card collapsed">
+      <h2>Render에서 확인된 카카오 블록 흐름 <span class="hdrRight"><span class="chev">▾</span></span></h2>
+      <div class="cardBody">
       <div class="small muted">스킬 요청에 포함된 현재블록·버튼 출발블록·직전블록을 모두 모아 보여줍니다. 카카오 내부에서만 실행되고 Render 스킬을 호출하지 않은 블록은 여기에는 잡히지 않으며, 그런 블록까지 포함한 전체 호출은 카카오 챗봇 관리자센터의 분석 → 통계에서 확인할 수 있습니다.</div>
       <div style="overflow-x:auto" class="gap">
         <table id="blockFlowTable">
@@ -4764,10 +4776,12 @@ app.get('/admin', (req, res) => {
           <tbody></tbody>
         </table>
       </div>
+      </div>
     </div>
 
-    <div class="card">
-      <h2>사용자 세션별 이동 경로</h2>
+    <div class="card collapsed">
+      <h2>사용자 세션별 이동 경로 <span class="hdrRight"><span class="chev">▾</span></span></h2>
+      <div class="cardBody">
       <div class="small muted">같은 방문자가 30분 이내에 이어서 누른 블록들을 하나의 세션으로 묶어 이동 경로를 보여줍니다. 스킬이 연결된 블록끼리만 경로에 나타나며, 최소 2단계 이상 이동한 세션만 표시합니다.</div>
       <div style="overflow-x:auto" class="gap">
         <table id="sessionPathTable">
@@ -4775,10 +4789,12 @@ app.get('/admin', (req, res) => {
           <tbody></tbody>
         </table>
       </div>
+      </div>
     </div>
 
-    <div class="card">
-      <h2>전체 질문 내역 <a class="dl" id="questionsCsv" href="#">전체 CSV 다운로드</a></h2>
+    <div class="card collapsed">
+      <h2>전체 질문 내역 <span class="hdrRight"><a class="dl" id="questionsCsv" href="#">전체 CSV 다운로드</a><span class="chev">▾</span></span></h2>
+      <div class="cardBody">
       <div class="small muted">시작일~종료일을 지정해 기간별로 조회할 수 있고, 테스트 질문은 건별 또는 조회기간 전체를 삭제할 수 있어요.</div>
       <div class="row gap">
         <input id="questionFrom" type="date" style="height:38px;border:1px solid #cfd6dd;border-radius:9px;padding:0 9px">
@@ -4800,16 +4816,20 @@ app.get('/admin', (req, res) => {
         <button id="questionPrev" class="ghost" style="height:34px">이전</button>
         <button id="questionNext" class="ghost" style="height:34px">다음</button>
       </div>
+      </div>
     </div>
 
-    <div class="card">
-      <h2>놓친 질문 요약 (빈도순) <a class="dl" id="missedCsv" href="#">요약 CSV 다운로드</a></h2>
+    <div class="card collapsed">
+      <h2>놓친 질문 요약 (빈도순) <span class="hdrRight"><a class="dl" id="missedCsv" href="#">요약 CSV 다운로드</a><span class="chev">▾</span></span></h2>
+      <div class="cardBody">
       <div class="small muted">같은 뜻으로 보이는 질문은 하나로 묶어서 보여줘요. 자주 놓친 질문부터 학습시키는 걸 추천해요.</div>
       <table id="missedTable"><thead><tr><th>질문</th><th>횟수</th><th>추정 항목</th><th>학습 등록</th></tr></thead><tbody></tbody></table>
+      </div>
     </div>
 
-    <div class="card">
-      <h2>놓친 질문 일별 내역 <a class="dl" id="missedDetailCsv" href="#">전체 CSV 다운로드</a></h2>
+    <div class="card collapsed">
+      <h2>놓친 질문 일별 내역 <span class="hdrRight"><a class="dl" id="missedDetailCsv" href="#">전체 CSV 다운로드</a><span class="chev">▾</span></span></h2>
+      <div class="cardBody">
       <div class="small muted">놓친 질문을 실제 발생한 날짜·시간별로 확인하며 기간별 조회와 삭제가 가능합니다.</div>
       <div class="row gap">
         <input id="missedFrom" type="date" style="height:38px;border:1px solid #cfd6dd;border-radius:9px;padding:0 9px">
@@ -4831,11 +4851,14 @@ app.get('/admin', (req, res) => {
         <button id="missedPrev" class="ghost" style="height:34px">이전</button>
         <button id="missedNext" class="ghost" style="height:34px">다음</button>
       </div>
+      </div>
     </div>
 
-    <div class="card">
-      <h2>학습된 표현</h2>
+    <div class="card collapsed">
+      <h2>학습된 표현 <span class="hdrRight"><span class="chev">▾</span></span></h2>
+      <div class="cardBody">
       <table id="learnedTable"><thead><tr><th>등록한 문장</th><th>연결된 항목</th><th></th></tr></thead><tbody></tbody></table>
+      </div>
     </div>
   </div>
 </div>
@@ -4875,6 +4898,13 @@ async function login(){
     document.getElementById('loginMsg').textContent = '토큰이 올바르지 않아요. 다시 확인해 주세요.';
   }
 }
+
+document.querySelectorAll('.card > h2').forEach(h => {
+  h.addEventListener('click', (e) => {
+    if (e.target.closest('button, a, input, select, textarea')) return;
+    h.closest('.card').classList.toggle('collapsed');
+  });
+});
 
 function kstTodayString(){
   const d = new Date(Date.now() + 9*60*60*1000);
