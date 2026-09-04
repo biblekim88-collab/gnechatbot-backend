@@ -4431,7 +4431,58 @@ app.get('/api/admin/export-section.xlsx', requireAdmin, (req, res) => {
     return sendXlsxSheet(res, '학습된표현', rows, '학습된표현', period);
   }
 
-  res.status(400).json({ error: 'type 파라미터가 올바르지 않습니다. (buttons/blockFlow/sessionPaths/visitors/learned)' });
+  if (type === 'daily') {
+    const rows = buildDailyStats(list, 0).map(d => ({
+      일자: d.date, 질문수: d.total, 순방문자: d.uniqueVisitors,
+      매칭: d.matchedCount, 미매칭: d.unmatchedCount,
+      직접입력: d.directInputCount, 버튼클릭: d.buttonClickCount, '매칭률(%)': d.matchRate
+    }));
+    return sendXlsxSheet(res, '조회기간일별통계', rows, '조회기간일별통계', period);
+  }
+
+  if (type === 'questionsAll') {
+    const q = String(req.query.q || '').trim().toLowerCase();
+    let rows = allList.map((e, idx) => {
+      const dt = toKstDateTimeParts(e.time);
+      return { idx, date: dt.date, time: dt.time, ...e };
+    });
+    if (period.from) rows = rows.filter(r => r.date >= period.from);
+    if (period.to) rows = rows.filter(r => r.date <= period.to);
+    if (q) rows = rows.filter(r => (`${r.query} ${r.matchedTitle} ${r.referrerBlock} ${r.currentBlock} ${r.lastBlock}`).toLowerCase().includes(q));
+    rows.sort((a, b) => b.idx - a.idx);
+    const outRows = rows.map(r => ({
+      '일자(KST)': r.date, '시간(KST)': r.time, 질문: r.query || '', 결과: r.matched ? '매칭' : '미매칭',
+      연결항목: r.matchedTitle || '', 입력유형: r.inputType || '기록없음', 버튼내용: r.buttonText || '',
+      버튼출발블록: r.referrerBlock || '', 현재스킬블록: r.currentBlock || '', 직전블록: r.lastBlock || '',
+      'Trigger Type': r.triggerType || '', 유입경로: r.source || ''
+    }));
+    return sendXlsxSheet(res, '전체질문내역', outRows, '전체질문내역', period);
+  }
+
+  if (type === 'missedSummary') {
+    const summary = getMissedSummary(filterByKstPeriod(readJson(MISSED_PATH, []), req.query));
+    const rows = summary.map(s => ({
+      질문: s.sample, 횟수: s.count, 추정항목: s.bestGuessTitle || '', 추정점수: s.bestGuessScore ?? '',
+      학습됨: s.alreadyLearned ? 'Y' : 'N', 최초발생: s.firstSeen || '', 최근발생: s.lastSeen || ''
+    }));
+    return sendXlsxSheet(res, '놓친질문요약', rows, '놓친질문요약', period);
+  }
+
+  if (type === 'missedDetail') {
+    const q = String(req.query.q || '').trim().toLowerCase();
+    let rows = readJson(MISSED_PATH, []).map((e, idx) => {
+      const dt = toKstDateTimeParts(e.time);
+      return { idx, date: dt.date, time: dt.time, query: e.query || '', bestGuessTitle: e.bestGuessTitle || '', bestGuessScore: e.bestGuessScore ?? '' };
+    });
+    if (period.from) rows = rows.filter(r => r.date >= period.from);
+    if (period.to) rows = rows.filter(r => r.date <= period.to);
+    if (q) rows = rows.filter(r => (`${r.query} ${r.bestGuessTitle}`).toLowerCase().includes(q));
+    rows.sort((a, b) => b.idx - a.idx);
+    const outRows = rows.map(r => ({ '일자(KST)': r.date, '시간(KST)': r.time, 놓친질문: r.query, 추정항목: r.bestGuessTitle, 추정점수: r.bestGuessScore }));
+    return sendXlsxSheet(res, '놓친질문일별', outRows, '놓친질문일별', period);
+  }
+
+  res.status(400).json({ error: 'type 파라미터가 올바르지 않습니다. (buttons/blockFlow/sessionPaths/visitors/learned/daily/questionsAll/missedSummary/missedDetail)' });
 });
 app.delete('/api/admin/stats', requireAdmin, (req, res) => {
   writeJson(QUERIES_PATH, []);
@@ -5052,7 +5103,7 @@ app.get('/admin', (req, res) => {
     </div>
 
     <div class="card collapsed">
-      <h2>조회기간 일별 통계 <span class="hdrRight"><a class="dl" id="dailyCsv" href="#">CSV 다운로드</a><span class="chev">▾</span></span></h2>
+      <h2>조회기간 일별 통계 <span class="hdrRight"><a class="dl" id="dailyCsv" href="#">엑셀 다운로드</a><span class="chev">▾</span></span></h2>
       <div class="cardBody">
       <div class="small muted">선택한 기간 안에서 질문이 있었던 날짜만 표시합니다.</div>
       <div style="overflow-x:auto" class="gap">
@@ -5123,7 +5174,7 @@ app.get('/admin', (req, res) => {
     </div>
 
     <div class="card collapsed">
-      <h2>전체 질문 내역 <span class="hdrRight"><a class="dl" id="questionsCsv" href="#">전체 CSV 다운로드</a><span class="chev">▾</span></span></h2>
+      <h2>전체 질문 내역 <span class="hdrRight"><a class="dl" id="questionsCsv" href="#">엑셀 다운로드</a><span class="chev">▾</span></span></h2>
       <div class="cardBody">
       <div class="small muted">시작일~종료일을 지정해 기간별로 조회할 수 있고, 테스트 질문은 건별 또는 조회기간 전체를 삭제할 수 있어요.</div>
       <div class="row gap">
@@ -5150,7 +5201,7 @@ app.get('/admin', (req, res) => {
     </div>
 
     <div class="card collapsed">
-      <h2>놓친 질문 요약 (빈도순) <span class="hdrRight"><a class="dl" id="missedCsv" href="#">요약 CSV 다운로드</a><span class="chev">▾</span></span></h2>
+      <h2>놓친 질문 요약 (빈도순) <span class="hdrRight"><a class="dl" id="missedCsv" href="#">엑셀 다운로드</a><span class="chev">▾</span></span></h2>
       <div class="cardBody">
       <div class="small muted">같은 뜻으로 보이는 질문은 하나로 묶어서 보여줘요. 자주 놓친 질문부터 학습시키는 걸 추천해요.</div>
       <table id="missedTable"><thead><tr><th>질문</th><th>횟수</th><th>추정 항목</th><th>학습 등록</th></tr></thead><tbody></tbody></table>
@@ -5158,7 +5209,7 @@ app.get('/admin', (req, res) => {
     </div>
 
     <div class="card collapsed">
-      <h2>놓친 질문 일별 내역 <span class="hdrRight"><a class="dl" id="missedDetailCsv" href="#">전체 CSV 다운로드</a><span class="chev">▾</span></span></h2>
+      <h2>놓친 질문 일별 내역 <span class="hdrRight"><a class="dl" id="missedDetailCsv" href="#">엑셀 다운로드</a><span class="chev">▾</span></span></h2>
       <div class="cardBody">
       <div class="small muted">놓친 질문을 실제 발생한 날짜·시간별로 확인하며 기간별 조회와 삭제가 가능합니다.</div>
       <div class="row gap">
@@ -5334,13 +5385,15 @@ async function loadStats(){
   document.getElementById('statsMeta').textContent = '조회기간: ' + ((s.period||{}).label || '전체 기간') + ' / 매칭 ' + s.matchedCount + '건 / 미매칭 ' + s.unmatchedCount + '건 / 직접입력 ' + directCount + '건 / 버튼 ' + buttonCount + '건 / 저장: ' + (s.storage === 'supabase' ? 'Supabase 영구보존' : 'Render 로컬');
   const dailyCsvParams = getStatsPeriodParams();
   dailyCsvParams.set('token', TOKEN);
-  document.getElementById('dailyCsv').href = '/api/admin/stats/daily.csv?' + dailyCsvParams.toString();
+  dailyCsvParams.set('type', 'daily');
+  document.getElementById('dailyCsv').href = '/api/admin/export-section.xlsx?' + dailyCsvParams.toString();
   const exportAllParams = getStatsPeriodParams();
   exportAllParams.set('token', TOKEN);
   document.getElementById('exportAllXlsx').href = '/api/admin/export-all.xlsx?' + exportAllParams.toString();
   const missedCsvParams = getStatsPeriodParams();
   missedCsvParams.set('token', TOKEN);
-  document.getElementById('missedCsv').href = '/api/admin/missed.csv?' + missedCsvParams.toString();
+  missedCsvParams.set('type', 'missedSummary');
+  document.getElementById('missedCsv').href = '/api/admin/export-section.xlsx?' + missedCsvParams.toString();
   document.getElementById('inputSummary').innerHTML = [
     ['직접입력', directCount],
     ['버튼클릭', buttonCount],
@@ -5399,10 +5452,10 @@ async function loadQuestions(page){
   ).join('') || '<tr><td colspan="10" class="muted">해당 조건의 질문이 없어요.</td></tr>';
   document.getElementById('questionPrev').disabled = QUESTION_PAGE <= 1;
   document.getElementById('questionNext').disabled = QUESTION_PAGE >= (d.pages||1);
-  const csvParams = new URLSearchParams({ token:TOKEN });
+  const csvParams = new URLSearchParams({ token:TOKEN, type:'questionsAll' });
   if (from) csvParams.set('from', from);
   if (to) csvParams.set('to', to);
-  document.getElementById('questionsCsv').href = '/api/admin/questions.csv?' + csvParams.toString();
+  document.getElementById('questionsCsv').href = '/api/admin/export-section.xlsx?' + csvParams.toString();
 
   document.querySelectorAll('.delQuestion').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
@@ -5440,10 +5493,10 @@ async function loadMissedDetail(page){
   ).join('') || '<tr><td colspan="6" class="muted">해당 조건의 놓친 질문이 없어요.</td></tr>';
   document.getElementById('missedPrev').disabled = MISSED_PAGE <= 1;
   document.getElementById('missedNext').disabled = MISSED_PAGE >= (d.pages||1);
-  const csvParams = new URLSearchParams({ token:TOKEN });
+  const csvParams = new URLSearchParams({ token:TOKEN, type:'missedDetail' });
   if (from) csvParams.set('from', from);
   if (to) csvParams.set('to', to);
-  document.getElementById('missedDetailCsv').href = '/api/admin/missed-detail.csv?' + csvParams.toString();
+  document.getElementById('missedDetailCsv').href = '/api/admin/export-section.xlsx?' + csvParams.toString();
 
   document.querySelectorAll('.delMissedDetail').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
