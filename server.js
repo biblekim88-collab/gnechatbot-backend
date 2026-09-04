@@ -2348,6 +2348,58 @@ function getKakaoBlockId(block) {
   return '';
 }
 
+// scenarios.json에 저장된 버튼(url/phone/block/text/plugin)을
+// 카카오 스킬 응답 버튼 형식으로 최대한 원본과 똑같이 변환합니다.
+// - url   -> 웹링크 버튼
+// - phone -> 전화 버튼
+// - block -> 값에 담긴 "[블록ID]"를 그대로 읽어 다른 블록으로 이동하는 버튼
+// - text  -> 눌렀을 때 그 문구를 입력한 것처럼 처리하는 버튼
+// - plugin(상담원 연결 등) -> 스킬 응답으로는 플러그인을 직접 열 수 없어
+//   최대한 비슷하게 문구 전송 버튼으로 대체합니다.
+function buildKakaoButtonsFromScenarioButtons(buttons) {
+  return (buttons || []).map(b => {
+    const label = String(b.label || '').slice(0, 14) || '바로가기';
+    const value = String(b.value || '');
+    if (b.type === 'url') {
+      return { label, action: 'webLink', webLinkUrl: value };
+    }
+    if (b.type === 'phone') {
+      return { label, action: 'phone', phoneNumber: value };
+    }
+    if (b.type === 'block') {
+      const m = value.match(/\[([0-9a-f]{24})\]\s*$/i);
+      if (m && m[1]) {
+        return { label, action: 'block', blockId: m[1], messageText: label };
+      }
+      return { label, action: 'message', messageText: label };
+    }
+    if (b.type === 'text') {
+      let text = value;
+      try { text = decodeURIComponent(value); } catch (e) { /* 값이 이미 일반 텍스트면 그대로 사용 */ }
+      return { label, action: 'message', messageText: text || label };
+    }
+    // plugin 등 스킬 응답에서 직접 지원하지 않는 타입은 문구 전송으로 안전하게 대체
+    return { label, action: 'message', messageText: label };
+  }).filter(Boolean).slice(0, 3);
+}
+
+// scenarios.json의 블록 하나(원래 오픈빌더 응답)를 카카오 스킬 응답 outputs로 재구성합니다.
+// 메시지 + 버튼을 basicCard 하나로 묶어서, 텍스트카드와 버튼카드가 따로 나가던 기존 방식보다
+// 원본 카드형 응답에 훨씬 가깝게 보이도록 합니다.
+function buildKakaoOutputsFromScenarioBlock(block) {
+  const outputs = [];
+  (block.responses || []).forEach(r => {
+    const message = String(r.message || '').trim();
+    const buttons = buildKakaoButtonsFromScenarioButtons(r.buttons || []);
+    if (buttons.length) {
+      outputs.push({ basicCard: { description: message || ' ', buttons } });
+    } else if (message) {
+      outputs.push({ simpleText: { text: message } });
+    }
+  });
+  return outputs;
+}
+
 function makeKakaoQuickReply(block) {
   const title = String((block && block.title) || '').trim();
   const blockId = getKakaoBlockId(block);
@@ -3924,15 +3976,7 @@ app.post('/api/kakao-skill', async (req, res) => {
     resetKakaoTransferFailStreak(kakaoUserId);
     trackQuery(utterance, block.title, true, 'kakao-smart-' + match.reason, 'kakao:' + kakaoUserId, kakaoInteraction);
 
-    const outputs = [];
-    (block.responses || []).forEach(r => {
-      outputs.push({ simpleText: { text: r.message } });
-      const urlPhoneButtons = (r.buttons || []).filter(b => b.type === 'url' || b.type === 'phone').map(b => {
-        if (b.type === 'url') return { action: 'webLink', label: b.label, webLinkUrl: b.value };
-        return { action: 'phone', label: b.label, phoneNumber: b.value };
-      });
-      if (urlPhoneButtons.length) outputs.push({ basicCard: { title: block.title, description: ' ', buttons: urlPhoneButtons } });
-    });
+    const outputs = buildKakaoOutputsFromScenarioBlock(block);
 
     const quickReplies = buildBlockQuickReplies(block, blocks);
     const assistantSummary = (block.responses || []).map(r => r.message || '').join('\n').slice(0, 1200);
