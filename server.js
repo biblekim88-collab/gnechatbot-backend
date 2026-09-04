@@ -5520,7 +5520,7 @@ async function loadMissed(){
   document.querySelector('#missedTable tbody').innerHTML = (d.items||[]).map(g=>{
     const learnedBadge = g.alreadyLearned ? ' <span class="badge ok">학습됨</span>' : '';
     return '<tr>'+
-      '<td style="min-width:140px">'+esc(g.sample)+learnedBadge+'</td>'+
+      '<td style="max-width:220px;word-break:break-word">'+esc(g.sample)+learnedBadge+'</td>'+
       '<td>'+esc(g.count)+'</td>'+
       '<td class="small muted" style="min-width:90px">'+esc(g.bestGuessTitle||'-')+'</td>'+
       '<td style="white-space:nowrap"><div class="row" style="flex-wrap:nowrap;gap:6px">'+
