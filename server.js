@@ -4310,6 +4310,129 @@ app.get('/api/admin/stats', requireAdmin, (req, res) => {
     period: { ...getAdminPeriod(req.query), label: periodLabel(req.query) }
   });
 });
+
+// 카드 하나 분량만 엑셀 한 시트로 내려받습니다. section 값으로 어떤 카드인지 지정합니다.
+function sendXlsxSheet(res, sheetName, rows, filenamePrefix, period) {
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.json_to_sheet(rows.length ? rows : [{ 안내: '해당 조건에 데이터가 없습니다.' }]);
+  XLSX.utils.book_append_sheet(wb, ws, sheetName);
+  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  const fname = filenamePrefix + '_' + (period.from || '전체') + '_' + (period.to || '전체') + '.xlsx';
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(fname)}"`);
+  res.send(buf);
+}
+
+app.get('/api/admin/export-section.xlsx', requireAdmin, (req, res) => {
+  const type = String(req.query.type || '').trim();
+  const period = getAdminPeriod(req.query);
+  const allList = readJson(QUERIES_PATH, []);
+  const list = filterByKstPeriod(allList, req.query);
+
+  if (type === 'buttons') {
+    const buttonCounts = {};
+    list.forEach(e => {
+      if (e.inputType !== '버튼클릭') return;
+      const label = String(e.buttonText || e.query || '').trim() || '(버튼명 확인 불가)';
+      buttonCounts[label] = (buttonCounts[label] || 0) + 1;
+    });
+    const rows = Object.entries(buttonCounts)
+      .sort((a,b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0]), 'ko'))
+      .map(([label,count]) => ({ 버튼문구: label, 클릭횟수: count }));
+    return sendXlsxSheet(res, '입력방식_버튼이용', rows, '입력방식_버튼이용', period);
+  }
+
+  if (type === 'blockFlow') {
+    const blockFlowMap = new Map();
+    const touchBlock = (name, kind) => {
+      const n = String(name || '').trim();
+      if (!n) return;
+      if (!blockFlowMap.has(n)) blockFlowMap.set(n, { name: n, current: 0, referrer: 0, last: 0 });
+      blockFlowMap.get(n)[kind] += 1;
+    };
+    list.forEach(e => {
+      touchBlock(e.currentBlock, 'current');
+      touchBlock(e.referrerBlock, 'referrer');
+      touchBlock(e.lastBlock, 'last');
+    });
+    const rows = [...blockFlowMap.values()]
+      .sort((a,b) => (b.current+b.referrer+b.last) - (a.current+a.referrer+a.last) || String(a.name).localeCompare(String(b.name), 'ko'))
+      .map(b => ({ 블록명: b.name, 현재스킬블록: b.current, 버튼출발블록: b.referrer, 직전블록: b.last }));
+    return sendXlsxSheet(res, '카카오블록흐름', rows, '카카오블록흐름', period);
+  }
+
+  if (type === 'sessionPaths') {
+    const byVisitorEntries = new Map();
+    list.forEach(e => {
+      const visitorId = String(e.visitorId || '').trim();
+      if (!visitorId) return;
+      const t = new Date(e.time).getTime();
+      if (!Number.isFinite(t)) return;
+      if (!byVisitorEntries.has(visitorId)) byVisitorEntries.set(visitorId, []);
+      byVisitorEntries.get(visitorId).push({ t, dateTime: toKstDateTimeParts(e.time).dateTime, block: e.currentBlock || e.matchedTitle || '', query: e.query || e.buttonText || '' });
+    });
+    const rows = [];
+    byVisitorEntries.forEach((entries, visitorId) => {
+      entries.sort((a, b) => a.t - b.t);
+      let session = [];
+      let sessionNo = 0;
+      const flush = () => {
+        if (session.length >= 2) {
+          sessionNo += 1;
+          session.forEach((s, i) => {
+            rows.push({ 방문자: maskVisitorId(visitorId), 세션번호: sessionNo, 순서: i + 1, 시간: s.dateTime, 블록: s.block || s.query || '(블록 미상)' });
+          });
+        }
+        session = [];
+      };
+      entries.forEach(e => {
+        if (session.length && (e.t - session[session.length - 1].t) > SESSION_GAP_MS) flush();
+        session.push(e);
+      });
+      flush();
+    });
+    return sendXlsxSheet(res, '세션별이동경로', rows, '세션별이동경로', period);
+  }
+
+  if (type === 'visitors') {
+    const byVisitor = new Map();
+    list.forEach(e => {
+      const visitorId = String(e.visitorId || '').trim();
+      if (!visitorId) return;
+      const dt = toKstDateTimeParts(e.time);
+      const t = new Date(e.time).getTime();
+      if (!Number.isFinite(t)) return;
+      if (!byVisitor.has(visitorId)) byVisitor.set(visitorId, { total: 0, matched: 0, firstT: t, lastT: t, dates: new Set(), topics: new Map() });
+      const v = byVisitor.get(visitorId);
+      v.total += 1;
+      if (e.matched) v.matched += 1;
+      if (t < v.firstT) v.firstT = t;
+      if (t > v.lastT) v.lastT = t;
+      v.dates.add(dt.date);
+      const topic = String(e.currentBlock || e.matchedTitle || '').trim();
+      if (topic) v.topics.set(topic, (v.topics.get(topic) || 0) + 1);
+    });
+    const rows = Array.from(byVisitor.entries())
+      .sort((a, b) => b[1].total - a[1].total)
+      .map(([id, v]) => ({
+        방문자: maskVisitorId(id), 총질문수: v.total,
+        매칭률: v.total ? Math.round((v.matched / v.total) * 100) : 0,
+        활동일수: v.dates.size,
+        첫이용: toKstDateTimeParts(new Date(v.firstT).toISOString()).dateTime,
+        마지막이용: toKstDateTimeParts(new Date(v.lastT).toISOString()).dateTime,
+        자주물어본항목: Array.from(v.topics.entries()).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([n, c]) => n + '(' + c + ')').join(', ')
+      }));
+    return sendXlsxSheet(res, '방문자별이용현황', rows, '방문자별이용현황', period);
+  }
+
+  if (type === 'learned') {
+    const learnedAll = readJson(LEARNED_PATH, []);
+    const rows = learnedAll.map(e => ({ 등록한문장: e.text || '', 연결된항목: e.blockTitle || '' }));
+    return sendXlsxSheet(res, '학습된표현', rows, '학습된표현', period);
+  }
+
+  res.status(400).json({ error: 'type 파라미터가 올바르지 않습니다. (buttons/blockFlow/sessionPaths/visitors/learned)' });
+});
 app.delete('/api/admin/stats', requireAdmin, (req, res) => {
   writeJson(QUERIES_PATH, []);
   res.json({ status: 'ok' });
@@ -4620,7 +4743,7 @@ app.get('/api/admin/export-all.xlsx', requireAdmin, (req, res) => {
 
   // 6) 학습된 표현
   const learnedAll = readJson(LEARNED_PATH, []);
-  const learnedRows = learnedAll.map(e => ({ 등록한문장: e.text || '', 연결된항목: e.title || e.matchedTitle || '' }));
+  const learnedRows = learnedAll.map(e => ({ 등록한문장: e.text || '', 연결된항목: e.blockTitle || '' }));
 
   const wb = XLSX.utils.book_new();
   const addSheet = (name, rows) => {
@@ -4942,7 +5065,7 @@ app.get('/admin', (req, res) => {
     </div>
 
     <div class="card collapsed">
-      <h2>입력 방식 · 버튼 이용 <span class="hdrRight"><span class="chev">▾</span></span></h2>
+      <h2>입력 방식 · 버튼 이용 <span class="hdrRight"><a class="dl" id="buttonsXlsx" href="#">엑셀 다운로드</a><span class="chev">▾</span></span></h2>
       <div class="cardBody">
       <div class="summary4" id="inputSummary"></div>
       <div class="small muted gap">카카오 스킬 요청의 Trigger Type을 기준으로 직접입력과 버튼클릭을 구분합니다. 기존 기록 중 Trigger Type이 없던 데이터는 '기록없음'으로 표시됩니다.</div>
@@ -4956,7 +5079,7 @@ app.get('/admin', (req, res) => {
     </div>
 
     <div class="card collapsed">
-      <h2>Render에서 확인된 카카오 블록 흐름 <span class="hdrRight"><span class="chev">▾</span></span></h2>
+      <h2>Render에서 확인된 카카오 블록 흐름 <span class="hdrRight"><a class="dl" id="blockFlowXlsx" href="#">엑셀 다운로드</a><span class="chev">▾</span></span></h2>
       <div class="cardBody">
       <div class="small muted">스킬 요청에 포함된 현재블록·버튼 출발블록·직전블록을 모두 모아 보여줍니다. 카카오 내부에서만 실행되고 Render 스킬을 호출하지 않은 블록은 여기에는 잡히지 않으며, 그런 블록까지 포함한 전체 호출은 카카오 챗봇 관리자센터의 분석 → 통계에서 확인할 수 있습니다.</div>
       <div style="overflow-x:auto" class="gap">
@@ -4969,7 +5092,7 @@ app.get('/admin', (req, res) => {
     </div>
 
     <div class="card collapsed">
-      <h2>사용자 세션별 이동 경로 <span class="hdrRight"><span class="chev">▾</span></span></h2>
+      <h2>사용자 세션별 이동 경로 <span class="hdrRight"><a class="dl" id="sessionPathsXlsx" href="#">엑셀 다운로드</a><span class="chev">▾</span></span></h2>
       <div class="cardBody">
       <div class="small muted">같은 방문자가 30분 이내에 이어서 누른 블록들을 하나의 세션으로 묶어 이동 경로를 보여줍니다. 스킬이 연결된 블록끼리만 경로에 나타나며, 최소 2단계 이상 이동한 세션만 표시합니다.</div>
       <div style="overflow-x:auto" class="gap">
@@ -4982,7 +5105,7 @@ app.get('/admin', (req, res) => {
     </div>
 
     <div class="card collapsed">
-      <h2>방문자별 이용 현황 <span class="hdrRight"><span class="chev">▾</span></span></h2>
+      <h2>방문자별 이용 현황 <span class="hdrRight"><a class="dl" id="visitorsXlsx" href="#">엑셀 다운로드</a><span class="chev">▾</span></span></h2>
       <div class="cardBody">
       <div class="small muted">방문자ID(카카오 사용자ID 등)별로 총 질문수·매칭률·자주 물어본 항목을 모아 보여줍니다. 접속 경로가 다르면(예: 카카오톡과 웹챗봇을 각각 이용) 같은 사람이어도 별도 방문자로 잡힐 수 있어요.</div>
       <div class="row gap">
@@ -5062,7 +5185,7 @@ app.get('/admin', (req, res) => {
     </div>
 
     <div class="card collapsed">
-      <h2>학습된 표현 <span class="hdrRight"><span class="chev">▾</span></span></h2>
+      <h2>학습된 표현 <span class="hdrRight"><a class="dl" id="learnedXlsx" href="#">엑셀 다운로드</a><span class="chev">▾</span></span></h2>
       <div class="cardBody">
       <table id="learnedTable"><thead><tr><th>등록한 문장</th><th>연결된 항목</th><th></th></tr></thead><tbody></tbody></table>
       </div>
@@ -5167,6 +5290,11 @@ async function loadVisitors(){
       '<td class="small muted">'+esc(v.topTopics||'-')+'</td>'+
     '</tr>'
   ).join('') || '<tr><td colspan="7" class="muted">해당 조건의 방문자가 없어요.</td></tr>';
+  const visitorsXlsxParams = new URLSearchParams({ token: TOKEN });
+  if (from) visitorsXlsxParams.set('from', from);
+  if (to) visitorsXlsxParams.set('to', to);
+  visitorsXlsxParams.set('type', 'visitors');
+  document.getElementById('visitorsXlsx').href = '/api/admin/export-section.xlsx?' + visitorsXlsxParams.toString();
 }
 
 async function loadSessionPaths(){
@@ -5184,6 +5312,11 @@ async function loadSessionPaths(){
       '<td>'+s.path.map(p => esc(p.block || p.query || '(블록 미상)')).join(' <span class="muted">→</span> ')+'</td>'+
     '</tr>'
   ).join('') || '<tr><td colspan="4" class="muted">2단계 이상 이어진 세션이 아직 없어요. 여러 블록에 스킬이 연결될수록 더 많이 잡혀요.</td></tr>';
+  const sessionPathsXlsxParams = new URLSearchParams({ token: TOKEN });
+  if (from) sessionPathsXlsxParams.set('from', from);
+  if (to) sessionPathsXlsxParams.set('to', to);
+  sessionPathsXlsxParams.set('type', 'sessionPaths');
+  document.getElementById('sessionPathsXlsx').href = '/api/admin/export-section.xlsx?' + sessionPathsXlsxParams.toString();
 }
 
 async function loadStats(){
@@ -5217,9 +5350,13 @@ async function loadStats(){
   document.querySelector('#buttonTable tbody').innerHTML = (s.topButtons||[]).map(b=>
     '<tr><td>'+esc(b.label)+'</td><td>'+esc(b.count)+'</td></tr>'
   ).join('') || '<tr><td colspan="2" class="muted">아직 기록된 버튼 클릭이 없어요.</td></tr>';
+  const buttonsXlsxParams = getStatsPeriodParams(); buttonsXlsxParams.set('token', TOKEN); buttonsXlsxParams.set('type', 'buttons');
+  document.getElementById('buttonsXlsx').href = '/api/admin/export-section.xlsx?' + buttonsXlsxParams.toString();
   document.querySelector('#blockFlowTable tbody').innerHTML = (s.blockFlows||[]).map(b=>
     '<tr><td>'+esc(b.name)+'</td><td>'+esc(b.current||0)+'</td><td>'+esc(b.referrer||0)+'</td><td>'+esc(b.last||0)+'</td></tr>'
   ).join('') || '<tr><td colspan="4" class="muted">아직 Render가 확인한 블록 정보가 없어요.</td></tr>';
+  const blockFlowXlsxParams = getStatsPeriodParams(); blockFlowXlsxParams.set('token', TOKEN); blockFlowXlsxParams.set('type', 'blockFlow');
+  document.getElementById('blockFlowXlsx').href = '/api/admin/export-section.xlsx?' + blockFlowXlsxParams.toString();
   document.querySelector('#dailyTable tbody').innerHTML = (s.days||[]).map(d=>
     '<tr>'+
       '<td>'+esc(d.date)+'</td>'+
@@ -5359,6 +5496,9 @@ async function loadLearned(){
     '<tr><td>'+esc(e.text)+'</td><td class="small muted">'+esc(e.blockTitle || (BLOCKS[e.blockIdx]||{}).title || ('#'+e.blockIdx))+'</td>'+
     '<td><button class="danger delLearn" style="height:32px;padding:0 10px;font-size:12px" data-i="'+i+'">삭제</button></td></tr>'
   ).join('') || '<tr><td colspan="3" class="muted">등록된 학습 표현이 없어요.</td></tr>';
+
+  const learnedXlsxParams = new URLSearchParams({ token: TOKEN, type: 'learned' });
+  document.getElementById('learnedXlsx').href = '/api/admin/export-section.xlsx?' + learnedXlsxParams.toString();
 
   document.querySelectorAll('.delLearn').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
