@@ -5524,7 +5524,7 @@ async function loadMissed(){
       '<td>'+esc(g.count)+'</td>'+
       '<td class="small muted">'+esc(g.bestGuessTitle||'-')+'</td>'+
       '<td><div class="row">'+
-        '<input type="text" list="blockTitleList" placeholder="항목 검색(ㄱㄴㄷ)" data-key="'+esc(g.key)+'" data-text="'+esc(g.sample)+'" class="teachInput" style="height:36px;border:1px solid #cfd6dd;border-radius:9px;padding:0 9px;width:180px">'+
+        '<input type="text" list="blockTitleList" placeholder="항목 검색(가나다순)" data-key="'+esc(g.key)+'" data-text="'+esc(g.sample)+'" class="teachInput" style="height:36px;border:1px solid #cfd6dd;border-radius:9px;padding:0 9px;width:180px">'+
         '<button class="ghost teachBtn" style="height:36px;padding:0 10px;font-size:12px" data-key="'+esc(g.key)+'" data-text="'+esc(g.sample)+'">학습</button>'+
       '</div></td>'+
     '</tr>';
