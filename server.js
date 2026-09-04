@@ -5077,6 +5077,7 @@ app.get('/admin', (req, res) => {
   </div>
 
   <div id="dash" style="display:none">
+    <datalist id="blockTitleList"></datalist>
     <h1>경상남도교육청 민원 챗봇 관리자 대시보드 <button class="ghost" id="logoutBtn" style="height:32px;padding:0 10px;font-size:12px">로그아웃</button></h1>
 
     <div class="card">
@@ -5317,6 +5318,8 @@ function syncSectionPeriodsFromStats(){
 
 async function loadAll(){
   BLOCKS = await api('/api/admin/blocks');
+  const sortedTitles = BLOCKS.map(b=>b.title).sort((a,b)=>String(a).localeCompare(String(b), 'ko'));
+  document.getElementById('blockTitleList').innerHTML = sortedTitles.map(t=>'<option value="'+esc(t)+'"></option>').join('');
   await Promise.all([loadStats(), loadQuestions(), loadMissed(), loadMissedDetail(), loadLearned(), loadSessionPaths(), loadVisitors()]);
 }
 
@@ -5514,7 +5517,6 @@ async function loadMissed(){
   const params = getStatsPeriodParams();
   params.set('limit', '100');
   const d = await api('/api/admin/missed-summary?' + params.toString());
-  const options = '<option value="">항목 선택…</option>' + BLOCKS.map(b=>'<option value="'+b.idx+'">'+esc(b.title)+'</option>').join('');
   document.querySelector('#missedTable tbody').innerHTML = (d.items||[]).map(g=>{
     const learnedBadge = g.alreadyLearned ? ' <span class="badge ok">학습됨</span>' : '';
     return '<tr>'+
@@ -5522,7 +5524,7 @@ async function loadMissed(){
       '<td>'+esc(g.count)+'</td>'+
       '<td class="small muted">'+esc(g.bestGuessTitle||'-')+'</td>'+
       '<td><div class="row">'+
-        '<select data-key="'+esc(g.key)+'" data-text="'+esc(g.sample)+'" class="teachSelect">'+options+'</select>'+
+        '<input type="text" list="blockTitleList" placeholder="항목 검색(ㄱㄴㄷ)" data-key="'+esc(g.key)+'" data-text="'+esc(g.sample)+'" class="teachInput" style="height:36px;border:1px solid #cfd6dd;border-radius:9px;padding:0 9px;width:180px">'+
         '<button class="ghost teachBtn" style="height:36px;padding:0 10px;font-size:12px" data-key="'+esc(g.key)+'" data-text="'+esc(g.sample)+'">학습</button>'+
       '</div></td>'+
     '</tr>';
@@ -5530,12 +5532,13 @@ async function loadMissed(){
 
   document.querySelectorAll('.teachBtn').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
-      const sel = document.querySelector('select[data-key="'+btn.dataset.key+'"]');
-      const blockIdx = sel.value;
-      if (!blockIdx) { sel.focus(); return; }
+      const input = document.querySelector('.teachInput[data-key="'+btn.dataset.key+'"]');
+      const titleTyped = input.value.trim();
+      const block = BLOCKS.find(b => b.title === titleTyped);
+      if (!block) { alert('목록에 있는 항목명을 정확히 선택해주세요.'); input.focus(); return; }
       btn.disabled = true;
       try{
-        await api('/api/learn', { method:'POST', body: JSON.stringify({ text: btn.dataset.text, blockIdx: Number(blockIdx) }) });
+        await api('/api/learn', { method:'POST', body: JSON.stringify({ text: btn.dataset.text, blockIdx: block.idx }) });
         await api('/api/admin/missed-summary/'+encodeURIComponent(btn.dataset.key), { method:'DELETE' });
         await Promise.all([loadMissed(), loadLearned()]);
       } finally { btn.disabled = false; }
