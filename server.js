@@ -5520,12 +5520,12 @@ async function loadMissed(){
   document.querySelector('#missedTable tbody').innerHTML = (d.items||[]).map(g=>{
     const learnedBadge = g.alreadyLearned ? ' <span class="badge ok">학습됨</span>' : '';
     return '<tr>'+
-      '<td>'+esc(g.sample)+learnedBadge+'</td>'+
+      '<td style="min-width:140px">'+esc(g.sample)+learnedBadge+'</td>'+
       '<td>'+esc(g.count)+'</td>'+
-      '<td class="small muted">'+esc(g.bestGuessTitle||'-')+'</td>'+
-      '<td><div class="row">'+
-        '<input type="text" list="blockTitleList" placeholder="항목 검색(가나다순)" data-key="'+esc(g.key)+'" data-text="'+esc(g.sample)+'" class="teachInput" style="height:36px;border:1px solid #cfd6dd;border-radius:9px;padding:0 9px;width:180px">'+
-        '<button class="ghost teachBtn" style="height:36px;padding:0 10px;font-size:12px" data-key="'+esc(g.key)+'" data-text="'+esc(g.sample)+'">학습</button>'+
+      '<td class="small muted" style="min-width:90px">'+esc(g.bestGuessTitle||'-')+'</td>'+
+      '<td style="white-space:nowrap"><div class="row" style="flex-wrap:nowrap;gap:6px">'+
+        '<input type="text" list="blockTitleList" placeholder="가나다순 검색" data-key="'+esc(g.key)+'" data-text="'+esc(g.sample)+'" class="teachInput" style="height:34px;border:1px solid #cfd6dd;border-radius:9px;padding:0 6px;width:120px;font-size:12px">'+
+        '<button class="ghost teachBtn" style="height:34px;padding:0 8px;font-size:12px;flex-shrink:0" data-key="'+esc(g.key)+'" data-text="'+esc(g.sample)+'">학습</button>'+
       '</div></td>'+
     '</tr>';
   }).join('') || '<tr><td colspan="4" class="muted">놓친 질문이 없어요.</td></tr>';
