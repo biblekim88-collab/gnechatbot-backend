@@ -10,6 +10,7 @@ const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
+const XLSX = require('xlsx');
 const crypto = require('crypto');
 
 const app = express();
@@ -4520,6 +4521,126 @@ app.get('/api/admin/visitors', requireAdmin, (req, res) => {
   res.json({ total: rows.length, period, visitors: rows.slice(0, limit) });
 });
 
+// 질문내역·놓친질문·방문자별·세션경로·일별통계·학습된표현을 시트별로 묶어
+// 엑셀(xlsx) 파일 하나로 내려받습니다. 조회기간을 지정하면 그 기간만, 지정하지 않으면 전체 기간입니다.
+app.get('/api/admin/export-all.xlsx', requireAdmin, (req, res) => {
+  const period = getAdminPeriod(req.query);
+  const inPeriod = (dateStr) => (!period.from || dateStr >= period.from) && (!period.to || dateStr <= period.to);
+
+  const allQueries = readJson(QUERIES_PATH, []);
+  const queries = allQueries.filter(e => inPeriod(toKstDateKey(e.time) || ''));
+
+  // 1) 전체 질문 내역
+  const questionRows = queries.map(e => {
+    const dt = toKstDateTimeParts(e.time);
+    return {
+      일자: dt.date, 시간: dt.time, 입력유형: e.inputType || '기록없음',
+      '질문/버튼': e.buttonText || e.query || '', 결과: e.matched ? '매칭' : '미매칭',
+      연결항목: e.matchedTitle || '', 버튼출발블록: e.referrerBlock || '',
+      현재스킬블록: e.currentBlock || '', 직전블록: e.lastBlock || '',
+      방문자: maskVisitorId(e.visitorId || '')
+    };
+  });
+
+  // 2) 놓친 질문 상세
+  const missedAll = readJson(MISSED_PATH, []);
+  const missedRows = missedAll
+    .filter(e => inPeriod(toKstDateKey(e.time) || ''))
+    .map(e => {
+      const dt = toKstDateTimeParts(e.time);
+      return { 일자: dt.date, 시간: dt.time, 놓친질문: e.query || '', 추정항목: e.bestGuessTitle || '', 점수: e.bestGuessScore ?? '' };
+    });
+
+  // 3) 방문자별 이용 현황
+  const byVisitor = new Map();
+  queries.forEach(e => {
+    const visitorId = String(e.visitorId || '').trim();
+    if (!visitorId) return;
+    const dt = toKstDateTimeParts(e.time);
+    const t = new Date(e.time).getTime();
+    if (!Number.isFinite(t)) return;
+    if (!byVisitor.has(visitorId)) byVisitor.set(visitorId, { total: 0, matched: 0, firstT: t, lastT: t, dates: new Set(), topics: new Map() });
+    const v = byVisitor.get(visitorId);
+    v.total += 1;
+    if (e.matched) v.matched += 1;
+    if (t < v.firstT) v.firstT = t;
+    if (t > v.lastT) v.lastT = t;
+    v.dates.add(dt.date);
+    const topic = String(e.currentBlock || e.matchedTitle || '').trim();
+    if (topic) v.topics.set(topic, (v.topics.get(topic) || 0) + 1);
+  });
+  const visitorRows = Array.from(byVisitor.entries())
+    .sort((a, b) => b[1].total - a[1].total)
+    .map(([id, v]) => ({
+      방문자: maskVisitorId(id), 총질문수: v.total,
+      매칭률: v.total ? Math.round((v.matched / v.total) * 100) : 0,
+      활동일수: v.dates.size,
+      첫이용: toKstDateTimeParts(new Date(v.firstT).toISOString()).dateTime,
+      마지막이용: toKstDateTimeParts(new Date(v.lastT).toISOString()).dateTime,
+      자주물어본항목: Array.from(v.topics.entries()).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([n, c]) => n + '(' + c + ')').join(', ')
+    }));
+
+  // 4) 세션별 이동 경로 (한 세션당 여러 행: 이동 순서대로)
+  const byVisitorEntries = new Map();
+  queries.forEach((e, idx) => {
+    const visitorId = String(e.visitorId || '').trim();
+    if (!visitorId) return;
+    const t = new Date(e.time).getTime();
+    if (!Number.isFinite(t)) return;
+    if (!byVisitorEntries.has(visitorId)) byVisitorEntries.set(visitorId, []);
+    byVisitorEntries.get(visitorId).push({ t, dateTime: toKstDateTimeParts(e.time).dateTime, block: e.currentBlock || e.matchedTitle || '', query: e.query || e.buttonText || '' });
+  });
+  const sessionRows = [];
+  byVisitorEntries.forEach((entries, visitorId) => {
+    entries.sort((a, b) => a.t - b.t);
+    let session = [];
+    let sessionNo = 0;
+    const flush = () => {
+      if (session.length >= 2) {
+        sessionNo += 1;
+        session.forEach((s, i) => {
+          sessionRows.push({ 방문자: maskVisitorId(visitorId), 세션번호: sessionNo, 순서: i + 1, 시간: s.dateTime, 블록: s.block || s.query || '(블록 미상)' });
+        });
+      }
+      session = [];
+    };
+    entries.forEach(e => {
+      if (session.length && (e.t - session[session.length - 1].t) > SESSION_GAP_MS) flush();
+      session.push(e);
+    });
+    flush();
+  });
+
+  // 5) 일별 통계
+  const dailyRows = buildDailyStats(queries, 0).map(d => ({
+    일자: d.date, 질문수: d.total, 순방문자: d.uniqueVisitors,
+    직접입력: d.directInputCount, 버튼클릭: d.buttonClickCount,
+    매칭: d.matchedCount, 미매칭: d.unmatchedCount, 매칭률: d.matchRate + '%'
+  }));
+
+  // 6) 학습된 표현
+  const learnedAll = readJson(LEARNED_PATH, []);
+  const learnedRows = learnedAll.map(e => ({ 등록한문장: e.text || '', 연결된항목: e.title || e.matchedTitle || '' }));
+
+  const wb = XLSX.utils.book_new();
+  const addSheet = (name, rows) => {
+    const ws = XLSX.utils.json_to_sheet(rows.length ? rows : [{ 안내: '해당 기간에 데이터가 없습니다.' }]);
+    XLSX.utils.book_append_sheet(wb, ws, name);
+  };
+  addSheet('질문내역', questionRows);
+  addSheet('놓친질문', missedRows);
+  addSheet('방문자별', visitorRows);
+  addSheet('세션경로', sessionRows);
+  addSheet('일별통계', dailyRows);
+  addSheet('학습된표현', learnedRows);
+
+  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  const fname = '챗봇데이터_' + (period.from || '전체') + '_' + (period.to || '전체') + '.xlsx';
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(fname)}"`);
+  res.send(buf);
+});
+
 app.get('/api/admin/questions', requireAdmin, (req, res) => {
   const list = readJson(QUERIES_PATH, []);
   const q = String(req.query.q || '').trim().toLowerCase();
@@ -4785,7 +4906,7 @@ app.get('/admin', (req, res) => {
     <h1>경상남도교육청 민원 챗봇 관리자 대시보드 <button class="ghost" id="logoutBtn" style="height:32px;padding:0 10px;font-size:12px">로그아웃</button></h1>
 
     <div class="card">
-      <h2>기간별 통계 <span class="hdrRight"><button class="ghost" id="refreshBtn" style="height:32px;padding:0 10px;font-size:12px">새로고침</button><span class="chev">▾</span></span></h2>
+      <h2>기간별 통계 <span class="hdrRight"><a class="dl" id="exportAllXlsx" href="#">전체 자료 엑셀 다운로드</a><button class="ghost" id="refreshBtn" style="height:32px;padding:0 10px;font-size:12px">새로고침</button><span class="chev">▾</span></span></h2>
       <div class="cardBody">
       <div class="small muted">한국시간(KST) 기준입니다. 날짜를 직접 지정하거나 주간·월간·연간 버튼으로 빠르게 조회할 수 있어요.</div>
       <div class="row gap" style="align-items:center">
@@ -5081,6 +5202,9 @@ async function loadStats(){
   const dailyCsvParams = getStatsPeriodParams();
   dailyCsvParams.set('token', TOKEN);
   document.getElementById('dailyCsv').href = '/api/admin/stats/daily.csv?' + dailyCsvParams.toString();
+  const exportAllParams = getStatsPeriodParams();
+  exportAllParams.set('token', TOKEN);
+  document.getElementById('exportAllXlsx').href = '/api/admin/export-all.xlsx?' + exportAllParams.toString();
   const missedCsvParams = getStatsPeriodParams();
   missedCsvParams.set('token', TOKEN);
   document.getElementById('missedCsv').href = '/api/admin/missed.csv?' + missedCsvParams.toString();
