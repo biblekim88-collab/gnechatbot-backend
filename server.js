@@ -2846,8 +2846,61 @@ function getKakaoInteractionMeta(body) {
   };
 }
 
+// 카카오 스킬 응답(payload)에서 실제로 이용자에게 나간 답변 텍스트를 뽑아냅니다.
+// outputs 배열 안의 simpleText/simpleImage/basicCard/textCard/listCard/carousel을 순회하며
+// 사람이 읽을 수 있는 요약 문자열로 합칩니다. (관리자 화면·통계 로그용, 카카오 응답 자체는 건드리지 않음)
+function extractKakaoAnswerText(payload) {
+  try {
+    const outputs = (payload && payload.template && Array.isArray(payload.template.outputs))
+      ? payload.template.outputs
+      : [];
+    const parts = [];
+
+    const pushIf = (v) => { const s = String(v || '').trim(); if (s) parts.push(s); };
+
+    const readOneCard = (card) => {
+      if (!card) return;
+      pushIf(card.title);
+      pushIf(card.description);
+      if (Array.isArray(card.items)) {
+        card.items.forEach(it => { pushIf(it && it.title); pushIf(it && it.description); });
+      }
+      if (Array.isArray(card.buttons)) {
+        card.buttons.forEach(b => pushIf(b && b.label ? `[버튼:${b.label}]` : ''));
+      }
+    };
+
+    outputs.forEach(out => {
+      if (!out || typeof out !== 'object') return;
+      if (out.simpleText) pushIf(out.simpleText.text);
+      else if (out.simpleImage) pushIf(out.simpleImage.altText);
+      else if (out.textCard) { pushIf(out.textCard.title); pushIf(out.textCard.description); }
+      else if (out.basicCard) readOneCard(out.basicCard);
+      else if (out.commerceCard) readOneCard(out.commerceCard);
+      else if (out.itemCard) {
+        pushIf(out.itemCard.title);
+        pushIf(out.itemCard.description);
+        if (Array.isArray(out.itemCard.itemList)) {
+          out.itemCard.itemList.forEach(it => pushIf(it && it.description ? `${it.title || ''} ${it.description}` : it && it.title));
+        }
+      } else if (out.listCard) {
+        pushIf(out.listCard.header && out.listCard.header.title);
+        if (Array.isArray(out.listCard.items)) {
+          out.listCard.items.forEach(it => pushIf(it && it.title));
+        }
+      } else if (out.carousel && out.carousel.items) {
+        out.carousel.items.forEach(readOneCard);
+      }
+    });
+
+    return parts.join(' / ').slice(0, 2000);
+  } catch (_e) {
+    return '';
+  }
+}
+
 // 통계용: 맞았든 못 맞았든 모든 질문을 기록
-function trackQuery(query, matchedTitle, matched, source, visitorId, interactionMeta = null) {
+function trackQuery(query, matchedTitle, matched, source, visitorId, interactionMeta = null, answerText = '') {
   const list = readJson(QUERIES_PATH, []);
   const meta = interactionMeta && typeof interactionMeta === 'object' ? interactionMeta : {};
   const inferredInputType = meta.inputType || (String(source || '').startsWith('web') ? '웹입력' : '');
@@ -2866,7 +2919,8 @@ function trackQuery(query, matchedTitle, matched, source, visitorId, interaction
     currentBlock: meta.currentBlock || '',
     currentBlockId: meta.currentBlockId || '',
     lastBlock: meta.lastBlock || '',
-    lastBlockId: meta.lastBlockId || ''
+    lastBlockId: meta.lastBlockId || '',
+    answerText: String(answerText || '').slice(0, 2000)
   });
   if (list.length > 20000) list.shift();
   writeJson(QUERIES_PATH, list);
@@ -3917,8 +3971,9 @@ app.post('/api/kakao-skill', async (req, res) => {
   if (!utterance.trim()) {
     // 스킬이 발화 없이 호출된 경우에도 카카오가 넘긴 블록 흐름은 통계에 남깁니다.
     const blockLabel = kakaoInteraction.currentBlock || kakaoInteraction.lastBlock || kakaoInteraction.referrerBlock || '카카오 블록 호출';
-    trackQuery('[블록 호출]', blockLabel, true, 'kakao-block-event', 'kakao:' + kakaoUserId, kakaoInteraction);
-    return res.json(withStaffSearchQuickReply(kakaoFallbackResponse('', blocks, { failCount: 0 })));
+    const resp0 = kakaoFallbackResponse('', blocks, { failCount: 0 });
+    trackQuery('[블록 호출]', blockLabel, true, 'kakao-block-event', 'kakao:' + kakaoUserId, kakaoInteraction, extractKakaoAnswerText(resp0));
+    return res.json(withStaffSearchQuickReply(resp0));
   }
 
   // 담당자 메뉴 자체를 누른 경우에는 블록 파라미터나 일반 시나리오 매칭보다 먼저 처리합니다.
@@ -3926,8 +3981,9 @@ app.post('/api/kakao-skill', async (req, res) => {
   if (isHqContactMenuAlias(utterance)) {
     resetKakaoFailStreak(kakaoUserId);
     resetKakaoTransferFailStreak(kakaoUserId);
-    trackQuery(utterance, '본청 업무담당자 안내', true, 'kakao-hq-contact-menu-alias', 'kakao:' + kakaoUserId, kakaoInteraction);
-    return res.json(kakaoHqContactAskResponse());
+    const resp1 = kakaoHqContactAskResponse();
+    trackQuery(utterance, '본청 업무담당자 안내', true, 'kakao-hq-contact-menu-alias', 'kakao:' + kakaoUserId, kakaoInteraction, extractKakaoAnswerText(resp1));
+    return res.json(resp1);
   }
 
   // '업무담당자 찾기' 블록에서 @sys.text 파라미터(work)로 받은 검색어는
@@ -3936,8 +3992,9 @@ app.post('/api/kakao-skill', async (req, res) => {
   if (hqWorkParam) {
     resetKakaoFailStreak(kakaoUserId);
     resetKakaoTransferFailStreak(kakaoUserId);
-    trackQuery(utterance, `본청 업무담당자:${hqWorkParam}`, true, 'kakao-live-hq-contact-param', 'kakao:' + kakaoUserId, kakaoInteraction);
-    return res.json(withStaffSearchQuickReply(await kakaoHqContactResponse({ query: hqWorkParam })));
+    const resp2 = await kakaoHqContactResponse({ query: hqWorkParam });
+    trackQuery(utterance, `본청 업무담당자:${hqWorkParam}`, true, 'kakao-live-hq-contact-param', 'kakao:' + kakaoUserId, kakaoInteraction, extractKakaoAnswerText(resp2));
+    return res.json(withStaffSearchQuickReply(resp2));
   }
 
   // '공무원 인사', '교원 인사'는 '담당자'라는 단어가 없어도
@@ -3947,15 +4004,17 @@ app.post('/api/kakao-skill', async (req, res) => {
   if (implicitPersonnelIntent) {
     resetKakaoFailStreak(kakaoUserId);
     resetKakaoTransferFailStreak(kakaoUserId);
+    const resp3 = await kakaoHqContactResponse(implicitPersonnelIntent);
     trackQuery(
       utterance,
       `본청 업무담당자:${implicitPersonnelIntent.query}`,
       true,
       'kakao-live-hq-personnel-contact',
       'kakao:' + kakaoUserId,
-      kakaoInteraction
+      kakaoInteraction,
+      extractKakaoAnswerText(resp3)
     );
-    return res.json(withStaffSearchQuickReply(await kakaoHqContactResponse(implicitPersonnelIntent)));
+    return res.json(withStaffSearchQuickReply(resp3));
   }
 
   // 전입학 담당자/전화번호 질문은 시나리오 매칭보다 먼저 처리합니다.
@@ -3964,8 +4023,9 @@ app.post('/api/kakao-skill', async (req, res) => {
   if (transferContactIntent) {
     resetKakaoFailStreak(kakaoUserId);
     resetKakaoTransferFailStreak(kakaoUserId);
-    trackQuery(utterance, '전입학 담당자 실시간 조회', true, 'kakao-live-transfer-contact', 'kakao:' + kakaoUserId, kakaoInteraction);
-    return res.json(withStaffSearchQuickReply(await kakaoTransferContactResponse(transferContactIntent)));
+    const resp4 = await kakaoTransferContactResponse(transferContactIntent);
+    trackQuery(utterance, '전입학 담당자 실시간 조회', true, 'kakao-live-transfer-contact', 'kakao:' + kakaoUserId, kakaoInteraction, extractKakaoAnswerText(resp4));
+    return res.json(withStaffSearchQuickReply(resp4));
   }
 
 
@@ -3975,8 +4035,9 @@ app.post('/api/kakao-skill', async (req, res) => {
   if (hqContactIntent) {
     resetKakaoFailStreak(kakaoUserId);
     resetKakaoTransferFailStreak(kakaoUserId);
-    trackQuery(utterance, `본청 업무담당자:${hqContactIntent.query || '업무확인'}`, true, 'kakao-live-hq-contact', 'kakao:' + kakaoUserId, kakaoInteraction);
-    return res.json(withStaffSearchQuickReply(await kakaoHqContactResponse(hqContactIntent)));
+    const resp5 = await kakaoHqContactResponse(hqContactIntent);
+    trackQuery(utterance, `본청 업무담당자:${hqContactIntent.query || '업무확인'}`, true, 'kakao-live-hq-contact', 'kakao:' + kakaoUserId, kakaoInteraction, extractKakaoAnswerText(resp5));
+    return res.json(withStaffSearchQuickReply(resp5));
   }
 
   // '공사'처럼 계약업무(재정과)와 시설공사업무(시설과)로 나뉘는 표현은
@@ -3985,15 +4046,17 @@ app.post('/api/kakao-skill', async (req, res) => {
   if (isAmbiguousConstructionQuery(utterance)) {
     resetKakaoFailStreak(kakaoUserId);
     resetKakaoTransferFailStreak(kakaoUserId);
+    const resp6 = await kakaoHqContactResponse({ query: '공사' });
     trackQuery(
       utterance,
       '공사 업무 구분: 재정과 계약 / 시설과 공사',
       true,
       'kakao-clarify-construction',
       'kakao:' + kakaoUserId,
-      kakaoInteraction
+      kakaoInteraction,
+      extractKakaoAnswerText(resp6)
     );
-    return res.json(withStaffSearchQuickReply(await kakaoHqContactResponse({ query: '공사' })));
+    return res.json(withStaffSearchQuickReply(resp6));
   }
 
   // 학교급을 말하지 않은 일반 전학 문의는 억지로 한 블록을 고르지 않고
@@ -4001,8 +4064,9 @@ app.post('/api/kakao-skill', async (req, res) => {
   if (needsTransferSchoolLevel(utterance)) {
     resetKakaoFailStreak(kakaoUserId);
     resetKakaoTransferFailStreak(kakaoUserId);
-    trackQuery(utterance, '전입학 학교급 확인', true, 'kakao-clarify-transfer-level', 'kakao:' + kakaoUserId, kakaoInteraction);
-    return res.json(withStaffSearchQuickReply(kakaoTransferSchoolLevelResponse(blocks)));
+    const resp7 = kakaoTransferSchoolLevelResponse(blocks);
+    trackQuery(utterance, '전입학 학교급 확인', true, 'kakao-clarify-transfer-level', 'kakao:' + kakaoUserId, kakaoInteraction, extractKakaoAnswerText(resp7));
+    return res.json(withStaffSearchQuickReply(resp7));
   }
 
   // API 유무와 관계없이 먼저 안전한 규칙/대표질문/오타 매칭을 시도
@@ -4011,14 +4075,15 @@ app.post('/api/kakao-skill', async (req, res) => {
     const block = blocks[match.idx];
     resetKakaoFailStreak(kakaoUserId);
     resetKakaoTransferFailStreak(kakaoUserId);
-    trackQuery(utterance, block.title, true, 'kakao-smart-' + match.reason, 'kakao:' + kakaoUserId, kakaoInteraction);
 
     const outputs = buildKakaoOutputsFromScenarioBlock(block);
-
     const quickReplies = buildBlockQuickReplies(block, blocks);
+    const resp8 = { version: '2.0', template: { outputs, quickReplies } };
     const assistantSummary = (block.responses || []).map(r => r.message || '').join('\n').slice(0, 1200);
+    // 이 블록은 원본 시나리오 문구(assistantSummary)가 가장 정확한 답변 텍스트이므로 그대로 사용합니다.
+    trackQuery(utterance, block.title, true, 'kakao-smart-' + match.reason, 'kakao:' + kakaoUserId, kakaoInteraction, assistantSummary || extractKakaoAnswerText(resp8));
     rememberTurn(kakaoUserId, utterance, assistantSummary);
-    return res.json(withStaffSearchQuickReply({ version: '2.0', template: { outputs, quickReplies } }));
+    return res.json(withStaffSearchQuickReply(resp8));
   }
 
   // 시나리오에서 답을 찾지 못한 정책/사업/제도 질문은 경남교육청 공식 통합검색으로 보완합니다.
@@ -4031,8 +4096,8 @@ app.post('/api/kakao-skill', async (req, res) => {
         resetKakaoTransferFailStreak(kakaoUserId);
         const officialTitle = officialResponse.meta && officialResponse.meta.results && officialResponse.meta.results[0]
           ? officialResponse.meta.results[0].title : '경남교육청 공식 누리집 검색';
-        trackQuery(utterance, `공식누리집:${officialTitle}`, true, 'kakao-gne-official-search', 'kakao:' + kakaoUserId, kakaoInteraction);
         const safe = { version: officialResponse.version, template: officialResponse.template };
+        trackQuery(utterance, `공식누리집:${officialTitle}`, true, 'kakao-gne-official-search', 'kakao:' + kakaoUserId, kakaoInteraction, extractKakaoAnswerText(safe));
         return res.json(withStaffSearchQuickReply(safe));
       }
     } catch (err) {
@@ -4057,12 +4122,13 @@ app.post('/api/kakao-skill', async (req, res) => {
       resetKakaoTransferFailStreak(kakaoUserId);
     }
     logMissed(utterance, bestCandidate ? blocks[bestCandidate.idx].title : '', bestCandidate ? bestCandidate.score : 0);
-    trackQuery(utterance, bestCandidate ? blocks[bestCandidate.idx].title : '', false, 'kakao-no-ai-ambiguous', 'kakao:' + kakaoUserId, kakaoInteraction);
-    return res.json(withStaffSearchQuickReply(kakaoFallbackResponse(utterance, blocks, {
+    const resp9 = kakaoFallbackResponse(utterance, blocks, {
       failCount,
       transferFailCount: transferFail.count,
       showTransferAi: transferFail.highSchool
-    })));
+    });
+    trackQuery(utterance, bestCandidate ? blocks[bestCandidate.idx].title : '', false, 'kakao-no-ai-ambiguous', 'kakao:' + kakaoUserId, kakaoInteraction, extractKakaoAnswerText(resp9));
+    return res.json(withStaffSearchQuickReply(resp9));
   }
 
   try {
@@ -4070,7 +4136,8 @@ app.post('/api/kakao-skill', async (req, res) => {
     const candidateTitle = candidates.length ? blocks[candidates[0].idx].title : '';
     resetKakaoFailStreak(kakaoUserId);
     resetKakaoTransferFailStreak(kakaoUserId);
-    trackQuery(utterance, candidateTitle ? `AI:${candidateTitle}` : 'AI', true, 'kakao-ai', 'kakao:' + kakaoUserId, kakaoInteraction);
+    // AI 응답은 answer 변수 자체가 실제로 나간 답변 텍스트이므로 그대로 기록합니다.
+    trackQuery(utterance, candidateTitle ? `AI:${candidateTitle}` : 'AI', true, 'kakao-ai', 'kakao:' + kakaoUserId, kakaoInteraction, answer);
     rememberTurn(kakaoUserId, utterance, answer);
     return res.json(withStaffSearchQuickReply(kakaoAiResponse(answer, candidates, blocks)));
   } catch (err) {
@@ -4084,12 +4151,13 @@ app.post('/api/kakao-skill', async (req, res) => {
       resetKakaoTransferFailStreak(kakaoUserId);
     }
     logMissed(utterance, bestCandidate ? blocks[bestCandidate.idx].title : '', bestCandidate ? bestCandidate.score : 0);
-    trackQuery(utterance, bestCandidate ? blocks[bestCandidate.idx].title : '', false, 'kakao-ai-error', 'kakao:' + kakaoUserId, kakaoInteraction);
-    return res.json(withStaffSearchQuickReply(kakaoFallbackResponse(utterance, blocks, {
+    const resp10 = kakaoFallbackResponse(utterance, blocks, {
       failCount,
       transferFailCount: transferFail.count,
       showTransferAi: transferFail.highSchool
-    })));
+    });
+    trackQuery(utterance, bestCandidate ? blocks[bestCandidate.idx].title : '', false, 'kakao-ai-error', 'kakao:' + kakaoUserId, kakaoInteraction, extractKakaoAnswerText(resp10));
+    return res.json(withStaffSearchQuickReply(resp10));
   }
 });
 
@@ -4448,11 +4516,11 @@ app.get('/api/admin/export-section.xlsx', requireAdmin, (req, res) => {
     });
     if (period.from) rows = rows.filter(r => r.date >= period.from);
     if (period.to) rows = rows.filter(r => r.date <= period.to);
-    if (q) rows = rows.filter(r => (`${r.query} ${r.matchedTitle} ${r.referrerBlock} ${r.currentBlock} ${r.lastBlock}`).toLowerCase().includes(q));
+    if (q) rows = rows.filter(r => (`${r.query} ${r.matchedTitle} ${r.referrerBlock} ${r.currentBlock} ${r.lastBlock} ${r.answerText || ''}`).toLowerCase().includes(q));
     rows.sort((a, b) => b.idx - a.idx);
     const outRows = rows.map(r => ({
       '일자(KST)': r.date, '시간(KST)': r.time, 질문: r.query || '', 결과: r.matched ? '매칭' : '미매칭',
-      연결항목: r.matchedTitle || '', 입력유형: r.inputType || '기록없음', 버튼내용: r.buttonText || '',
+      연결항목: r.matchedTitle || '', 실제답변내용: r.answerText || '', 입력유형: r.inputType || '기록없음', 버튼내용: r.buttonText || '',
       버튼출발블록: r.referrerBlock || '', 현재스킬블록: r.currentBlock || '', 직전블록: r.lastBlock || '',
       'Trigger Type': r.triggerType || '', 유입경로: r.source || ''
     }));
@@ -4841,14 +4909,15 @@ app.get('/api/admin/questions', requireAdmin, (req, res) => {
       currentBlock: e.currentBlock || '',
       currentBlockId: e.currentBlockId || '',
       lastBlock: e.lastBlock || '',
-      lastBlockId: e.lastBlockId || ''
+      lastBlockId: e.lastBlockId || '',
+      answerText: e.answerText || ''
     };
   });
 
   const period = getAdminPeriod(req.query);
   if (period.from) rows = rows.filter(r => r.date >= period.from);
   if (period.to) rows = rows.filter(r => r.date <= period.to);
-  if (q) rows = rows.filter(r => (`${r.query} ${r.matchedTitle} ${r.referrerBlock} ${r.currentBlock} ${r.lastBlock}`).toLowerCase().includes(q));
+  if (q) rows = rows.filter(r => (`${r.query} ${r.matchedTitle} ${r.referrerBlock} ${r.currentBlock} ${r.lastBlock} ${r.answerText}`).toLowerCase().includes(q));
   rows.sort((a, b) => b.idx - a.idx);
 
   const total = rows.length;
@@ -4878,7 +4947,8 @@ app.get('/api/admin/questions.csv', requireAdmin, (req, res) => {
       currentBlock: e.currentBlock || '',
       currentBlockId: e.currentBlockId || '',
       lastBlock: e.lastBlock || '',
-      lastBlockId: e.lastBlockId || ''
+      lastBlockId: e.lastBlockId || '',
+      answerText: e.answerText || ''
     };
   });
   const period = getAdminPeriod(req.query);
@@ -4891,6 +4961,7 @@ app.get('/api/admin/questions.csv', requireAdmin, (req, res) => {
     { key: 'query', label: '질문' },
     { key: 'result', label: '결과' },
     { key: 'matchedTitle', label: '연결 항목' },
+    { key: 'answerText', label: '실제 답변 내용' },
     { key: 'inputType', label: '입력유형' },
     { key: 'buttonText', label: '버튼내용' },
     { key: 'referrerBlock', label: '버튼/상호작용 출발블록' },
@@ -5182,7 +5253,7 @@ app.get('/admin', (req, res) => {
         <input id="questionFrom" type="date" style="height:38px;border:1px solid #cfd6dd;border-radius:9px;padding:0 9px">
         <span class="small muted" style="align-self:center">~</span>
         <input id="questionTo" type="date" style="height:38px;border:1px solid #cfd6dd;border-radius:9px;padding:0 9px">
-        <input id="questionSearch" type="text" placeholder="질문 또는 연결 항목 검색" style="flex:1;min-width:180px;height:38px">
+        <input id="questionSearch" type="text" placeholder="질문, 연결 항목 또는 답변 내용 검색" style="flex:1;min-width:180px;height:38px">
         <button id="questionFilterBtn" class="ghost" style="height:38px">조회</button>
         <button id="questionResetBtn" class="ghost" style="height:38px">전체</button>
         <button id="questionDeletePeriodBtn" class="danger" style="height:38px">조회기간 질문 삭제</button>
@@ -5190,7 +5261,7 @@ app.get('/admin', (req, res) => {
       <div class="small muted gap" id="questionMeta"></div>
       <div style="overflow-x:auto" class="gap">
         <table id="questionsTable">
-          <thead><tr><th>일자</th><th>시간</th><th>입력유형</th><th>질문/버튼</th><th>결과</th><th>연결 항목</th><th>버튼 출발블록</th><th>현재 스킬블록</th><th>직전블록</th><th></th></tr></thead>
+          <thead><tr><th>일자</th><th>시간</th><th>입력유형</th><th>질문/버튼</th><th>결과</th><th>연결 항목</th><th>실제 답변 내용</th><th>버튼 출발블록</th><th>현재 스킬블록</th><th>직전블록</th><th></th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
@@ -5447,12 +5518,13 @@ async function loadQuestions(page){
       '<td>'+esc(e.buttonText || e.query)+'</td>'+ 
       '<td>'+(e.matched ? '<span class="badge ok">매칭</span>' : '<span class="badge" style="background:#fde8e8;color:#b02a2a">미매칭</span>')+'</td>'+ 
       '<td class="small muted">'+esc(e.matchedTitle||'-')+'</td>'+ 
+      '<td class="small muted" style="max-width:280px;white-space:normal" title="'+esc(e.answerText||'')+'">'+esc(e.answerText ? (e.answerText.length>60 ? e.answerText.slice(0,60)+'…' : e.answerText) : '-')+'</td>'+
       '<td class="small muted">'+esc(e.referrerBlock||'-')+'</td>'+
       '<td class="small muted">'+esc(e.currentBlock||'-')+'</td>'+
       '<td class="small muted">'+esc(e.lastBlock||'-')+'</td>'+
       '<td><button class="danger delQuestion" style="height:30px;padding:0 9px;font-size:11px" data-i="'+esc(e.idx)+'">삭제</button></td>'+
     '</tr>'
-  ).join('') || '<tr><td colspan="10" class="muted">해당 조건의 질문이 없어요.</td></tr>';
+  ).join('') || '<tr><td colspan="11" class="muted">해당 조건의 질문이 없어요.</td></tr>';
   document.getElementById('questionPrev').disabled = QUESTION_PAGE <= 1;
   document.getElementById('questionNext').disabled = QUESTION_PAGE >= (d.pages||1);
   const csvParams = new URLSearchParams({ token:TOKEN, type:'questionsAll' });
