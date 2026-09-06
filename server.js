@@ -5261,7 +5261,13 @@ app.get('/admin', (req, res) => {
       <div class="small muted gap" id="questionMeta"></div>
       <div style="overflow-x:auto" class="gap">
         <table id="questionsTable">
-          <thead><tr><th>일자</th><th>시간</th><th>입력유형</th><th>질문/버튼</th><th>결과</th><th>연결 항목</th><th>실제 답변 내용</th><th>버튼 출발블록</th><th>현재 스킬블록</th><th>직전블록</th><th></th></tr></thead>
+          <colgroup>
+            <col style="width:78px"><col style="width:56px"><col style="width:64px">
+            <col style="width:150px"><col style="min-width:320px">
+            <col style="width:56px"><col style="width:110px">
+            <col style="width:90px"><col style="width:90px"><col style="width:90px"><col style="width:50px">
+          </colgroup>
+          <thead><tr><th>일자</th><th>시간</th><th>입력유형</th><th>질문/버튼</th><th>실제 답변 내용</th><th>결과</th><th>연결 항목</th><th>버튼 출발블록</th><th>현재 스킬블록</th><th>직전블록</th><th></th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
@@ -5515,10 +5521,10 @@ async function loadQuestions(page){
       '<td>'+esc(e.date)+'</td>'+ 
       '<td>'+esc(e.time)+'</td>'+ 
       '<td>'+(e.inputType === '버튼클릭' ? '<span class="badge">버튼클릭</span>' : (e.inputType === '직접입력' ? '<span class="badge ok">직접입력</span>' : '<span class="small muted">'+esc(e.inputType||'기록없음')+'</span>'))+'</td>'+
-      '<td>'+esc(e.buttonText || e.query)+'</td>'+ 
+      '<td class="small" style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(e.buttonText || e.query)+'">'+esc(e.buttonText || e.query)+'</td>'+ 
+      '<td class="small" style="white-space:normal;word-break:break-word" title="'+esc(e.answerText||'')+'">'+esc(e.answerText ? (e.answerText.length>220 ? e.answerText.slice(0,220)+'…' : e.answerText) : '-')+'</td>'+
       '<td>'+(e.matched ? '<span class="badge ok">매칭</span>' : '<span class="badge" style="background:#fde8e8;color:#b02a2a">미매칭</span>')+'</td>'+ 
       '<td class="small muted">'+esc(e.matchedTitle||'-')+'</td>'+ 
-      '<td class="small muted" style="max-width:280px;white-space:normal" title="'+esc(e.answerText||'')+'">'+esc(e.answerText ? (e.answerText.length>60 ? e.answerText.slice(0,60)+'…' : e.answerText) : '-')+'</td>'+
       '<td class="small muted">'+esc(e.referrerBlock||'-')+'</td>'+
       '<td class="small muted">'+esc(e.currentBlock||'-')+'</td>'+
       '<td class="small muted">'+esc(e.lastBlock||'-')+'</td>'+
