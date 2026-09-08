@@ -475,6 +475,15 @@ function smartMatch(rawQuery, blocks) {
   if (!raw) return {matched:false, idx:-1, score:0, reason:'empty', candidates:[]};
 
   const compact = compactText(raw);
+  // 관리자가 대시보드에서 직접 교정한 문장은 하드코딩된 규칙보다 먼저 적용합니다.
+  const learned = readJson(LEARNED_PATH, []);
+  for (let i = learned.length - 1; i >= 0; i--) {
+    const entry = learned[i] || {};
+    if (compact && compact === compactText(entry.text || '') && blocks[entry.blockIdx]) {
+      return { matched:true, idx:entry.blockIdx, score:1, reason:'admin-learned', candidates:[{idx:entry.blockIdx,score:1}] };
+    }
+  }
+
   const exactTitle = EXACT_QUERY_ROUTES[compact];
   if (exactTitle) {
     const routed = routeByTitle(exactTitle, blocks, 'exact-route');
@@ -4885,6 +4894,11 @@ app.get('/api/admin/export-all.xlsx', requireAdmin, (req, res) => {
 
 app.get('/api/admin/questions', requireAdmin, (req, res) => {
   const list = readJson(QUERIES_PATH, []);
+  const learnedByText = new Map();
+  readJson(LEARNED_PATH, []).forEach(e => {
+    const key = compactText(e && e.text || '');
+    if (key) learnedByText.set(key, e.blockTitle || (BLOCKS[e.blockIdx] || {}).title || '');
+  });
   const q = String(req.query.q || '').trim().toLowerCase();
   const pageSize = Math.min(Math.max(Number(req.query.pageSize) || 200, 20), 500);
   const page = Math.max(Number(req.query.page) || 1, 1);
@@ -4900,6 +4914,7 @@ app.get('/api/admin/questions', requireAdmin, (req, res) => {
       matched: !!e.matched,
       result: e.matched ? '매칭' : '미매칭',
       matchedTitle: e.matchedTitle || '',
+      learnedTitle: learnedByText.get(compactText(e.query || '')) || '',
       source: e.source || '',
       inputType: e.inputType || '기록없음',
       triggerType: e.triggerType || '',
@@ -5081,11 +5096,11 @@ app.post('/api/learn', requireAdmin, (req, res) => {
   if (!text || blockIdx == null || !BLOCKS[blockIdx]) {
     return res.status(400).json({ error: 'text와 유효한 blockIdx(또는 blockTitle)가 필요합니다.' });
   }
-  const list = readJson(LEARNED_PATH, []);
-  if (!list.some(e => e.text === text && e.blockIdx === blockIdx)) {
-    list.push({ text, blockIdx, blockTitle: BLOCKS[blockIdx].title, time: new Date().toISOString() });
-    writeJson(LEARNED_PATH, list);
-  }
+  // 같은 질문을 다시 교정하면 이전 연결을 제거하고 최신 선택으로 덮어씁니다.
+  const normalizedText = compactText(text);
+  const list = readJson(LEARNED_PATH, []).filter(e => compactText(e.text || '') !== normalizedText);
+  list.push({ text: String(text).trim(), blockIdx, blockTitle: BLOCKS[blockIdx].title, time: new Date().toISOString() });
+  writeJson(LEARNED_PATH, list);
   res.json({ status: 'ok', list });
 });
 app.delete('/api/learn/:i', requireAdmin, (req, res) => {
@@ -5264,10 +5279,10 @@ app.get('/admin', (req, res) => {
           <colgroup>
             <col style="width:78px"><col style="width:56px"><col style="width:64px">
             <col style="width:150px"><col style="min-width:320px">
-            <col style="width:56px"><col style="width:110px">
+            <col style="width:56px"><col style="width:110px"><col style="width:220px">
             <col style="width:90px"><col style="width:90px"><col style="width:90px"><col style="width:50px">
           </colgroup>
-          <thead><tr><th>일자</th><th>시간</th><th>입력유형</th><th>질문/버튼</th><th>실제 답변 내용</th><th>결과</th><th>연결 항목</th><th>버튼 출발블록</th><th>현재 스킬블록</th><th>직전블록</th><th></th></tr></thead>
+          <thead><tr><th>일자</th><th>시간</th><th>입력유형</th><th>질문/버튼</th><th>실제 답변 내용</th><th>결과</th><th>기존 연결</th><th>교정 학습</th><th>버튼 출발블록</th><th>현재 스킬블록</th><th>직전블록</th><th></th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
@@ -5516,6 +5531,8 @@ async function loadQuestions(page){
   const d = await api('/api/admin/questions?' + params.toString());
   QUESTION_PAGE = d.page || 1;
   document.getElementById('questionMeta').textContent = '전체 ' + d.total + '건 · ' + QUESTION_PAGE + '/' + d.pages + '페이지 (페이지당 최대 200건)';
+  const blockOptions = BLOCKS.slice().sort((a,b)=>String(a.title).localeCompare(String(b.title), 'ko'))
+    .map(b=>'<option value="'+esc(b.title)+'">').join('');
   document.querySelector('#questionsTable tbody').innerHTML = (d.items||[]).map(e=>
     '<tr>'+ 
       '<td>'+esc(e.date)+'</td>'+ 
@@ -5525,12 +5542,24 @@ async function loadQuestions(page){
       '<td class="small" style="white-space:normal;word-break:break-word" title="'+esc(e.answerText||'')+'">'+esc(e.answerText ? (e.answerText.length>220 ? e.answerText.slice(0,220)+'…' : e.answerText) : '-')+'</td>'+
       '<td>'+(e.matched ? '<span class="badge ok">매칭</span>' : '<span class="badge" style="background:#fde8e8;color:#b02a2a">미매칭</span>')+'</td>'+ 
       '<td class="small muted">'+esc(e.matchedTitle||'-')+'</td>'+ 
+      '<td style="min-width:210px">'+(e.query && e.inputType !== '버튼클릭' ?
+        '<div class="row" style="flex-wrap:nowrap;gap:5px">'+
+          '<input type="text" list="questionBlockList" class="questionTeachInput" data-i="'+esc(e.idx)+'" value="'+esc(e.learnedTitle||'')+'" placeholder="항목 선택" style="height:30px;border:1px solid #cfd6dd;border-radius:8px;padding:0 6px;width:130px;font-size:11px">'+
+          '<button class="ghost questionTeachBtn" data-i="'+esc(e.idx)+'" data-text="'+esc(e.query)+'" style="height:30px;padding:0 8px;font-size:11px;flex-shrink:0">'+(e.learnedTitle?'변경':'교정')+'</button>'+ 
+        '</div>' : '<span class="small muted">-</span>')+'</td>'+ 
       '<td class="small muted">'+esc(e.referrerBlock||'-')+'</td>'+
       '<td class="small muted">'+esc(e.currentBlock||'-')+'</td>'+
       '<td class="small muted">'+esc(e.lastBlock||'-')+'</td>'+
       '<td><button class="danger delQuestion" style="height:30px;padding:0 9px;font-size:11px" data-i="'+esc(e.idx)+'">삭제</button></td>'+
     '</tr>'
-  ).join('') || '<tr><td colspan="11" class="muted">해당 조건의 질문이 없어요.</td></tr>';
+  ).join('') || '<tr><td colspan="12" class="muted">해당 조건의 질문이 없어요.</td></tr>';
+  let questionBlockList = document.getElementById('questionBlockList');
+  if (!questionBlockList) {
+    questionBlockList = document.createElement('datalist');
+    questionBlockList.id = 'questionBlockList';
+    document.body.appendChild(questionBlockList);
+  }
+  questionBlockList.innerHTML = blockOptions;
   document.getElementById('questionPrev').disabled = QUESTION_PAGE <= 1;
   document.getElementById('questionNext').disabled = QUESTION_PAGE >= (d.pages||1);
   const csvParams = new URLSearchParams({ token:TOKEN, type:'questionsAll' });
@@ -5545,6 +5574,21 @@ async function loadQuestions(page){
       try {
         await api('/api/admin/questions/' + btn.dataset.i, { method:'DELETE' });
         await Promise.all([loadStats(), loadQuestions(QUESTION_PAGE)]);
+      } finally { btn.disabled = false; }
+    });
+  });
+
+  document.querySelectorAll('.questionTeachBtn').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const input = document.querySelector('.questionTeachInput[data-i="'+btn.dataset.i+'"]');
+      const titleTyped = input.value.trim();
+      const block = BLOCKS.find(b => b.title === titleTyped);
+      if (!block) { alert('목록에 있는 항목명을 정확히 선택해주세요.'); input.focus(); return; }
+      btn.disabled = true;
+      try {
+        await api('/api/learn', { method:'POST', body:JSON.stringify({ text:btn.dataset.text, blockIdx:block.idx }) });
+        alert('교정했습니다. 다음부터 같은 질문은 「' + titleTyped + '」 항목으로 연결됩니다.');
+        await Promise.all([loadQuestions(QUESTION_PAGE), loadLearned()]);
       } finally { btn.disabled = false; }
     });
   });
