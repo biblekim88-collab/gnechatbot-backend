@@ -5121,7 +5121,7 @@ app.get('/admin', (req, res) => {
 <title>경상남도교육청 민원 챗봇 관리자</title>
 <style>
   *{box-sizing:border-box} body{margin:0;background:#f4f6f8;font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",sans-serif;color:#222}
-  .wrap{max-width:960px;margin:0 auto;padding:18px 14px 60px}
+  .wrap{max-width:1880px;margin:0 auto;padding:18px 20px 60px}
   h1{font-size:20px;margin:0 0 14px}
   .card{background:#fff;border-radius:16px;padding:18px;box-shadow:0 2px 12px rgba(0,0,0,.06);margin-bottom:16px}
   .card h2{font-size:16px;margin:0 0 12px;display:flex;align-items:center;justify-content:space-between;gap:8px}
@@ -5137,7 +5137,9 @@ app.get('/admin', (req, res) => {
   .stat .n{font-size:22px;font-weight:800}.stat .l{font-size:12px;color:#777;margin-top:2px}
   table{width:100%;border-collapse:collapse;font-size:13px}
   th,td{text-align:left;padding:8px 6px;border-bottom:1px solid #eef1f4;vertical-align:top}
-  th{color:#777;font-weight:700}
+  th{color:#777;font-weight:700;white-space:nowrap}
+  #questionsTable{min-width:1780px;table-layout:fixed}
+  #questionsTable td{word-break:keep-all;overflow-wrap:anywhere;line-height:1.45}
   .muted{color:#999}.small{font-size:12px}
   .badge{display:inline-block;background:#e8f3ff;color:#1b5dbf;border-radius:999px;padding:2px 8px;font-size:11px;font-weight:700}
   .badge.ok{background:#e9f8ee;color:#1c8a45}
@@ -5277,10 +5279,10 @@ app.get('/admin', (req, res) => {
       <div style="overflow-x:auto" class="gap">
         <table id="questionsTable">
           <colgroup>
-            <col style="width:78px"><col style="width:56px"><col style="width:64px">
-            <col style="width:150px"><col style="min-width:320px">
-            <col style="width:56px"><col style="width:110px"><col style="width:220px">
-            <col style="width:90px"><col style="width:90px"><col style="width:90px"><col style="width:50px">
+            <col style="width:85px"><col style="width:70px"><col style="width:80px">
+            <col style="width:210px"><col style="width:420px">
+            <col style="width:70px"><col style="width:150px"><col style="width:240px">
+            <col style="width:140px"><col style="width:140px"><col style="width:140px"><col style="width:65px">
           </colgroup>
           <thead><tr><th>일자</th><th>시간</th><th>입력유형</th><th>질문/버튼</th><th>실제 답변 내용</th><th>결과</th><th>기존 연결</th><th>교정 학습</th><th>버튼 출발블록</th><th>현재 스킬블록</th><th>직전블록</th><th></th></tr></thead>
           <tbody></tbody>
@@ -5538,7 +5540,7 @@ async function loadQuestions(page){
       '<td>'+esc(e.date)+'</td>'+ 
       '<td>'+esc(e.time)+'</td>'+ 
       '<td>'+(e.inputType === '버튼클릭' ? '<span class="badge">버튼클릭</span>' : (e.inputType === '직접입력' ? '<span class="badge ok">직접입력</span>' : '<span class="small muted">'+esc(e.inputType||'기록없음')+'</span>'))+'</td>'+
-      '<td class="small" style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(e.buttonText || e.query)+'">'+esc(e.buttonText || e.query)+'</td>'+ 
+      '<td class="small" style="white-space:normal" title="'+esc(e.buttonText || e.query)+'">'+esc(e.buttonText || e.query)+'</td>'+ 
       '<td class="small" style="white-space:normal;word-break:break-word" title="'+esc(e.answerText||'')+'">'+esc(e.answerText ? (e.answerText.length>220 ? e.answerText.slice(0,220)+'…' : e.answerText) : '-')+'</td>'+
       '<td>'+(e.matched ? '<span class="badge ok">매칭</span>' : '<span class="badge" style="background:#fde8e8;color:#b02a2a">미매칭</span>')+'</td>'+ 
       '<td class="small muted">'+esc(e.matchedTitle||'-')+'</td>'+ 
