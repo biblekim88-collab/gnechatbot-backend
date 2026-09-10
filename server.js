@@ -348,7 +348,7 @@ const EXACT_QUERY_ROUTES = Object.freeze({
   '정보공개':'정보공개청구','팩스':'팩스민원','팩스민원':'팩스민원','스승찾기':'스승찾기','아이북':'아이톡톡아이북','학폭':'학교폭력 불복절차',
   // 전학 학교급 선택 버튼이 대화 상태 없이 단답으로 전달되어도 정확한 전입학 안내로 연결
   '고':'고등학교전입학','고등':'고등학교전입학','고교':'고등학교전입학','고등학교':'고등학교전입학',
-  '중':'초중학교전입학','중등':'초중학교전입학','중학교':'초중학교전입학',
+  '중':'초중학교전입학','중등':'초중학교전입학','중학교':'초중학교전입학','중등학교':'초중학교전입학',
   '초':'초중학교전입학','초등':'초중학교전입학','초등학교':'초중학교전입학'
 });
 
@@ -368,7 +368,7 @@ function routeByTitle(title, blocks, reason='rule') {
 function detectTransferSchoolLevel(rawQuery) {
   const raw = String(rawQuery || '').trim();
   if (/(고등학교|고등학생|고교)/.test(raw)) return 'high';
-  if (/(중학교|중학생)/.test(raw)) return 'middle';
+  if (/(중등학교|중학교|중학생)/.test(raw)) return 'middle';
   if (/(초등학교|초등학생)/.test(raw)) return 'elementary';
 
   const tokens = raw.replace(/[^가-힣A-Za-z0-9]+/g, ' ').trim().split(/\s+/).filter(Boolean);
@@ -2115,7 +2115,7 @@ function getTransferFailureContext(rawQuery, blocks, bestCandidate) {
   const candidateTransfer = /(전입학|전학|선배정|재배정|귀국자편입학)/.test(compactText(title));
   const explicitHigh = /(고등학교|고교|고딩|고등학생)/.test(q);
   const candidateHigh = /(고등학교|진로변경|귀국자편입학)/.test(compactText(title));
-  const explicitNonHigh = /(중학교|중딩|중학생|초등학교|초딩|초등학생)/.test(q);
+  const explicitNonHigh = /(중등학교|중학교|중딩|중학생|초등학교|초딩|초등학생)/.test(q);
 
   return {
     isTransfer: directTransfer || candidateTransfer,
@@ -4021,39 +4021,6 @@ app.post('/api/kakao-skill', async (req, res) => {
     const resp0 = kakaoFallbackResponse('', blocks, { failCount: 0 });
     trackQuery('[블록 호출]', blockLabel, true, 'kakao-block-event', 'kakao:' + kakaoUserId, kakaoInteraction, extractKakaoAnswerText(resp0));
     return res.json(withStaffSearchQuickReply(resp0));
-  }
-
-  // 전학 학교급 선택값은 관리자 교정학습보다도 먼저 처리합니다.
-  // 오픈빌더가 버튼값만 전달하거나 과거에 잘못 학습된 값이 있어도 항상 전학 안내로 고정합니다.
-  const forcedTransferRaw = String(utterance || '')
-    .replace(/초등ㅇ학교/g, '초등학교')
-    .replace(/중등ㅇ학교/g, '중학교')
-    .replace(/고등ㅇ학교/g, '고등학교');
-  const forcedTransferLevel = compactText(forcedTransferRaw);
-  const forcedIsTransfer = /(전학|전입학|학교옮)/.test(forcedTransferLevel);
-  const detectedForcedLevel = detectTransferSchoolLevel(forcedTransferRaw);
-  const forcedElementary = /^(초|초등|초등학교)$/.test(forcedTransferLevel)
-    || (forcedIsTransfer && (detectedForcedLevel === 'elementary' || /(?:전학|전입학)(?:초|초등|초등학교)$/.test(forcedTransferLevel)));
-  const forcedMiddle = /^(중|중등|중학교)$/.test(forcedTransferLevel)
-    || (forcedIsTransfer && (detectedForcedLevel === 'middle' || /(?:전학|전입학)(?:중|중등|중학교)$/.test(forcedTransferLevel)));
-  const forcedHigh = /^(고|고등|고교|고등학교)$/.test(forcedTransferLevel)
-    || (forcedIsTransfer && (detectedForcedLevel === 'high' || /(?:전학|전입학)(?:고|고등|고교|고등학교)$/.test(forcedTransferLevel)));
-  const forcedTransferTitle = forcedElementary || forcedMiddle
-    ? '초중학교전입학'
-    : (forcedHigh ? '고등학교전입학' : '');
-  if (forcedTransferTitle) {
-    const forcedTransferBlock = blocks.find(b => (b.title || '').trim() === forcedTransferTitle);
-    if (forcedTransferBlock) {
-      KAKAO_TRANSFER_LEVEL_PENDING.delete(kakaoUserId);
-      resetKakaoFailStreak(kakaoUserId);
-      resetKakaoTransferFailStreak(kakaoUserId);
-      const outputs = buildKakaoOutputsFromScenarioBlock(forcedTransferBlock);
-      const quickReplies = buildBlockQuickReplies(forcedTransferBlock, blocks);
-      const response = { version: '2.0', template: { outputs, quickReplies } };
-      trackQuery(utterance, forcedTransferBlock.title, true, 'kakao-transfer-level-forced', 'kakao:' + kakaoUserId, kakaoInteraction, extractKakaoAnswerText(response));
-      rememberTurn(kakaoUserId, utterance, extractKakaoAnswerText(response));
-      return res.json(withStaffSearchQuickReply(response));
-    }
   }
 
   // 직전 '전학' 질문에서 학교급을 물은 경우, 학교급 단답을 입학이 아닌 전학 안내로 연결합니다.
