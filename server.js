@@ -359,6 +359,21 @@ function routeByTitle(title, blocks, reason='rule') {
   return idx == null ? null : { matched:true, idx, score:1, reason, candidates:[{idx,score:1}] };
 }
 
+// 전학 문맥에서만 '초/중/고', '초등/중등/고등' 같은 짧은 학교급 표현을 해석합니다.
+// 일반 질문의 한 글자까지 전학으로 오인하지 않도록 전학 분기와 후속 선택 상태에서만 사용합니다.
+function detectTransferSchoolLevel(rawQuery) {
+  const raw = String(rawQuery || '').trim();
+  if (/(고등학교|고등학생|고교)/.test(raw)) return 'high';
+  if (/(중학교|중학생)/.test(raw)) return 'middle';
+  if (/(초등학교|초등학생)/.test(raw)) return 'elementary';
+
+  const tokens = raw.replace(/[^가-힣A-Za-z0-9]+/g, ' ').trim().split(/\s+/).filter(Boolean);
+  if (tokens.some(t => t === '고' || t === '고등')) return 'high';
+  if (tokens.some(t => t === '중' || t === '중등')) return 'middle';
+  if (tokens.some(t => t === '초' || t === '초등')) return 'elementary';
+  return '';
+}
+
 function intentRoute(rawQuery, blocks) {
   const q = compactText(expandQuery(rawQuery));
   const has = (...xs) => xs.some(x => q.includes(compactText(x)));
@@ -378,13 +393,14 @@ function intentRoute(rawQuery, blocks) {
   // 전입학: 학교급/특수유형/서류/담당자를 분리
   const transfer = has('전입학','전학','학교옮','거주지이전');
   if (transfer) {
+    const transferLevel = detectTransferSchoolLevel(rawQuery);
     if (has('귀국','해외','외국')) return routeByTitle('고등학교 귀국자 편입학', blocks, 'intent');
     if (has('진로변경','특성화고','일반고에서특성화','특성화고에서일반')) return routeByTitle('진로변경 전입학', blocks, 'intent');
     if (has('창원') && has('중학교') && has('담당자','전화','번호','연락처')) return routeByTitle('창원 중학교 전입학 담당자', blocks, 'intent');
-    if (has('고등학교') && has('담당자','전화','번호','연락처')) return routeByTitle('고등학교 전학 담당자', blocks, 'intent');
-    if (has('고등학교') && has('서류','제출서류','준비물','구비서류')) return routeByTitle('고등학교전입학제출서류', blocks, 'intent');
-    if (has('초등학교','중학교')) return routeByTitle('초중학교전입학', blocks, 'intent');
-    if (has('고등학교')) return routeByTitle('고등학교전입학', blocks, 'intent');
+    if (transferLevel === 'high' && has('담당자','전화','번호','연락처')) return routeByTitle('고등학교 전학 담당자', blocks, 'intent');
+    if (transferLevel === 'high' && has('서류','제출서류','준비물','구비서류')) return routeByTitle('고등학교전입학제출서류', blocks, 'intent');
+    if (transferLevel === 'elementary' || transferLevel === 'middle') return routeByTitle('초중학교전입학', blocks, 'intent');
+    if (transferLevel === 'high') return routeByTitle('고등학교전입학', blocks, 'intent');
   }
 
   // 고입 선배정/재배정
@@ -2076,11 +2092,10 @@ function consumePendingTransferLevel(kakaoUserId, rawQuery) {
     return null;
   }
 
-  const q = compactText(expandQuery(rawQuery));
+  const level = detectTransferSchoolLevel(rawQuery);
   let title = null;
-  if (/^(고등학교|고교)$/.test(q)) title = '고등학교전입학';
-  else if (/^(중학교|중등)$/.test(q)) title = '초중학교전입학';
-  else if (/^(초등학교|초등)$/.test(q)) title = '초중학교전입학';
+  if (level === 'high') title = '고등학교전입학';
+  else if (level === 'middle' || level === 'elementary') title = '초중학교전입학';
 
   if (title) KAKAO_TRANSFER_LEVEL_PENDING.delete(kakaoUserId);
   return title;
@@ -2529,7 +2544,7 @@ function findBlockForKakaoReference(ref, blocks) {
 function needsTransferSchoolLevel(rawQuery) {
   const q = compactText(expandQuery(rawQuery));
   const isTransfer = /(전입학|전학|학교옮|거주지이전)/.test(q);
-  const hasSchoolLevel = /(고등학교|중학교|초등학교)/.test(q);
+  const hasSchoolLevel = !!detectTransferSchoolLevel(rawQuery);
   const specialTransfer = /(귀국|해외|외국|진로변경|특성화고|일반고|선배정|재배정)/.test(q);
   return isTransfer && !hasSchoolLevel && !specialTransfer;
 }
