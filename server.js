@@ -2557,9 +2557,9 @@ function kakaoTransferSchoolLevelResponse(blocks) {
   // 블록 직접 호출은 오픈빌더 설정에 따라 서버의 전학 분기를 우회할 수 있습니다.
   // 학교급 버튼은 명확한 전학 문장을 서버로 다시 보내 항상 해당 안내로 연결합니다.
   const quickReplies = [
-    { label: '초', action: 'message', messageText: '초등학교 전학' },
-    { label: '중', action: 'message', messageText: '중학교 전학' },
-    { label: '고', action: 'message', messageText: '고등학교 전학' }
+    { label: '초등학교', action: 'message', messageText: '초등학교 전학' },
+    { label: '중학교', action: 'message', messageText: '중학교 전학' },
+    { label: '고등학교', action: 'message', messageText: '고등학교 전학' }
   ];
 
   quickReplies.push({ label: '☎ 콜센터 연결', action: 'message', messageText: '콜센터' });
