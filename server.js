@@ -4023,6 +4023,39 @@ app.post('/api/kakao-skill', async (req, res) => {
     return res.json(withStaffSearchQuickReply(resp0));
   }
 
+  // 전학 학교급 선택값은 관리자 교정학습보다도 먼저 처리합니다.
+  // 오픈빌더가 버튼값만 전달하거나 과거에 잘못 학습된 값이 있어도 항상 전학 안내로 고정합니다.
+  const forcedTransferRaw = String(utterance || '')
+    .replace(/초등ㅇ학교/g, '초등학교')
+    .replace(/중등ㅇ학교/g, '중학교')
+    .replace(/고등ㅇ학교/g, '고등학교');
+  const forcedTransferLevel = compactText(forcedTransferRaw);
+  const forcedIsTransfer = /(전학|전입학|학교옮)/.test(forcedTransferLevel);
+  const detectedForcedLevel = detectTransferSchoolLevel(forcedTransferRaw);
+  const forcedElementary = /^(초|초등|초등학교)$/.test(forcedTransferLevel)
+    || (forcedIsTransfer && (detectedForcedLevel === 'elementary' || /(?:전학|전입학)(?:초|초등|초등학교)$/.test(forcedTransferLevel)));
+  const forcedMiddle = /^(중|중등|중학교)$/.test(forcedTransferLevel)
+    || (forcedIsTransfer && (detectedForcedLevel === 'middle' || /(?:전학|전입학)(?:중|중등|중학교)$/.test(forcedTransferLevel)));
+  const forcedHigh = /^(고|고등|고교|고등학교)$/.test(forcedTransferLevel)
+    || (forcedIsTransfer && (detectedForcedLevel === 'high' || /(?:전학|전입학)(?:고|고등|고교|고등학교)$/.test(forcedTransferLevel)));
+  const forcedTransferTitle = forcedElementary || forcedMiddle
+    ? '초중학교전입학'
+    : (forcedHigh ? '고등학교전입학' : '');
+  if (forcedTransferTitle) {
+    const forcedTransferBlock = blocks.find(b => (b.title || '').trim() === forcedTransferTitle);
+    if (forcedTransferBlock) {
+      KAKAO_TRANSFER_LEVEL_PENDING.delete(kakaoUserId);
+      resetKakaoFailStreak(kakaoUserId);
+      resetKakaoTransferFailStreak(kakaoUserId);
+      const outputs = buildKakaoOutputsFromScenarioBlock(forcedTransferBlock);
+      const quickReplies = buildBlockQuickReplies(forcedTransferBlock, blocks);
+      const response = { version: '2.0', template: { outputs, quickReplies } };
+      trackQuery(utterance, forcedTransferBlock.title, true, 'kakao-transfer-level-forced', 'kakao:' + kakaoUserId, kakaoInteraction, extractKakaoAnswerText(response));
+      rememberTurn(kakaoUserId, utterance, extractKakaoAnswerText(response));
+      return res.json(withStaffSearchQuickReply(response));
+    }
+  }
+
   // 직전 '전학' 질문에서 학교급을 물은 경우, 학교급 단답을 입학이 아닌 전학 안내로 연결합니다.
   const pendingTransferTitle = consumePendingTransferLevel(kakaoUserId, utterance);
   if (pendingTransferTitle) {
