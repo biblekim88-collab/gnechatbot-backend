@@ -5586,7 +5586,7 @@ async function loadQuestions(page){
       '<td>'+esc(e.date)+'</td>'+ 
       '<td>'+esc(e.time)+'</td>'+ 
       '<td>'+(e.inputType === '버튼클릭' ? '<span class="badge">버튼클릭</span>' : (e.inputType === '직접입력' ? '<span class="badge ok">직접입력</span>' : '<span class="small muted">'+esc(e.inputType||'기록없음')+'</span>'))+'</td>'+
-      '<td class="small" style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(e.buttonText || e.query)+'">'+esc(e.buttonText || e.query)+'</td>'+ 
+      '<td class="small" style="min-width:260px;max-width:420px;white-space:normal;overflow:visible;text-overflow:clip;word-break:break-word;overflow-wrap:anywhere;line-height:1.55" title="'+esc(e.buttonText || e.query)+'">'+esc(e.buttonText || e.query)+'</td>'+ 
       '<td class="small" style="white-space:normal;word-break:break-word" title="'+esc(e.answerText||'')+'">'+esc(e.answerText ? (e.answerText.length>220 ? e.answerText.slice(0,220)+'…' : e.answerText) : '-')+'</td>'+
       '<td>'+(e.matched ? '<span class="badge ok">매칭</span>' : '<span class="badge" style="background:#fde8e8;color:#b02a2a">미매칭</span>')+'</td>'+ 
       '<td class="small muted">'+esc(e.matchedTitle||'-')+'</td>'+ 
