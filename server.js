@@ -2567,7 +2567,7 @@ function kakaoTransferSchoolLevelResponse(blocks) {
   return {
     version: '2.0',
     template: {
-      outputs: [{ simpleText: { text: '전학하려는 학생의 학교급을 선택해 주세요.\n학교급에 따라 전입학 절차가 달라요.\n예: 초 / 중 / 고' } }],
+      outputs: [{ simpleText: { text: '전학하려는 학생의 학교급을 선택해 주세요.\n학교급에 따라 전입학 절차가 달라요.\n👇 아래 버튼을 눌러 주세요.' } }],
       quickReplies: quickReplies.slice(0, 10)
     }
   };
