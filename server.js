@@ -539,6 +539,9 @@ const KAKAO_FAIL_STREAKS = new Map();
 // 전학 관련 질문의 연속 실패 횟수는 별도로 관리합니다.
 // 고등학교 전학 맥락에서 2회 이상 실패하면 참고용 AI 상담 링크를 함께 노출합니다.
 const KAKAO_TRANSFER_FAIL_STREAKS = new Map();
+// '전학' 안내 후 이용자가 학교급만 입력해도 앞선 전학 맥락을 이어갑니다.
+const KAKAO_TRANSFER_LEVEL_PENDING = new Map();
+const KAKAO_TRANSFER_LEVEL_PENDING_TTL_MS = 10 * 60 * 1000;
 const FAIL_STREAK_TTL_MS = 30 * 60 * 1000;
 const FAIL_STREAK_ESCALATE_AT = 2;
 const TRANSFER_AI_ESCALATE_AT = 2;
@@ -2059,6 +2062,30 @@ function resetKakaoTransferFailStreak(kakaoUserId) {
   KAKAO_TRANSFER_FAIL_STREAKS.delete(kakaoUserId);
 }
 
+function markKakaoTransferLevelPending(kakaoUserId) {
+  if (!kakaoUserId) return;
+  KAKAO_TRANSFER_LEVEL_PENDING.set(kakaoUserId, { updatedAt: Date.now() });
+}
+
+function consumePendingTransferLevel(kakaoUserId, rawQuery) {
+  if (!kakaoUserId) return null;
+  const entry = KAKAO_TRANSFER_LEVEL_PENDING.get(kakaoUserId);
+  if (!entry) return null;
+  if (Date.now() - entry.updatedAt > KAKAO_TRANSFER_LEVEL_PENDING_TTL_MS) {
+    KAKAO_TRANSFER_LEVEL_PENDING.delete(kakaoUserId);
+    return null;
+  }
+
+  const q = compactText(expandQuery(rawQuery));
+  let title = null;
+  if (/^(고등학교|고교)$/.test(q)) title = '고등학교전입학';
+  else if (/^(중학교|중등)$/.test(q)) title = '초중학교전입학';
+  else if (/^(초등학교|초등)$/.test(q)) title = '초중학교전입학';
+
+  if (title) KAKAO_TRANSFER_LEVEL_PENDING.delete(kakaoUserId);
+  return title;
+}
+
 function getTransferFailureContext(rawQuery, blocks, bestCandidate) {
   const q = compactText(expandQuery(rawQuery));
   const title = bestCandidate && bestCandidate.idx >= 0 && blocks[bestCandidate.idx]
@@ -2522,6 +2549,10 @@ function kakaoTransferSchoolLevelResponse(blocks) {
     // 실제 연결 블록은 '초중학교전입학'이지만 이용자에게는 중학교 선택지로 표시
     q.label = '중학교 전입학';
     quickReplies.push(q);
+
+    const elementary = makeKakaoQuickReply(middle);
+    elementary.label = '초등학교 전입학';
+    quickReplies.push(elementary);
   }
 
   quickReplies.push({ label: '☎ 콜센터 연결', action: 'message', messageText: '콜센터' });
@@ -3985,6 +4016,22 @@ app.post('/api/kakao-skill', async (req, res) => {
     return res.json(withStaffSearchQuickReply(resp0));
   }
 
+  // 직전 '전학' 질문에서 학교급을 물은 경우, 학교급 단답을 입학이 아닌 전학 안내로 연결합니다.
+  const pendingTransferTitle = consumePendingTransferLevel(kakaoUserId, utterance);
+  if (pendingTransferTitle) {
+    const transferBlock = blocks.find(b => (b.title || '').trim() === pendingTransferTitle);
+    if (transferBlock) {
+      resetKakaoFailStreak(kakaoUserId);
+      resetKakaoTransferFailStreak(kakaoUserId);
+      const outputs = buildKakaoOutputsFromScenarioBlock(transferBlock);
+      const quickReplies = buildBlockQuickReplies(transferBlock, blocks);
+      const response = { version: '2.0', template: { outputs, quickReplies } };
+      trackQuery(utterance, transferBlock.title, true, 'kakao-transfer-level-followup', 'kakao:' + kakaoUserId, kakaoInteraction, extractKakaoAnswerText(response));
+      rememberTurn(kakaoUserId, utterance, extractKakaoAnswerText(response));
+      return res.json(withStaffSearchQuickReply(response));
+    }
+  }
+
   // 담당자 메뉴 자체를 누른 경우에는 블록 파라미터나 일반 시나리오 매칭보다 먼저 처리합니다.
   // 예: '담당자(본청) 안내', '담당자 안내', '담당자', '담당', '담당부서', '담당업무'
   if (isHqContactMenuAlias(utterance)) {
@@ -4073,6 +4120,7 @@ app.post('/api/kakao-skill', async (req, res) => {
   if (needsTransferSchoolLevel(utterance)) {
     resetKakaoFailStreak(kakaoUserId);
     resetKakaoTransferFailStreak(kakaoUserId);
+    markKakaoTransferLevelPending(kakaoUserId);
     const resp7 = kakaoTransferSchoolLevelResponse(blocks);
     trackQuery(utterance, '전입학 학교급 확인', true, 'kakao-clarify-transfer-level', 'kakao:' + kakaoUserId, kakaoInteraction, extractKakaoAnswerText(resp7));
     return res.json(withStaffSearchQuickReply(resp7));
@@ -5121,7 +5169,7 @@ app.get('/admin', (req, res) => {
 <title>경상남도교육청 민원 챗봇 관리자</title>
 <style>
   *{box-sizing:border-box} body{margin:0;background:#f4f6f8;font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",sans-serif;color:#222}
-  .wrap{max-width:1880px;margin:0 auto;padding:18px 20px 60px}
+  .wrap{max-width:960px;margin:0 auto;padding:18px 14px 60px}
   h1{font-size:20px;margin:0 0 14px}
   .card{background:#fff;border-radius:16px;padding:18px;box-shadow:0 2px 12px rgba(0,0,0,.06);margin-bottom:16px}
   .card h2{font-size:16px;margin:0 0 12px;display:flex;align-items:center;justify-content:space-between;gap:8px}
@@ -5137,9 +5185,7 @@ app.get('/admin', (req, res) => {
   .stat .n{font-size:22px;font-weight:800}.stat .l{font-size:12px;color:#777;margin-top:2px}
   table{width:100%;border-collapse:collapse;font-size:13px}
   th,td{text-align:left;padding:8px 6px;border-bottom:1px solid #eef1f4;vertical-align:top}
-  th{color:#777;font-weight:700;white-space:nowrap}
-  #questionsTable{min-width:1780px;table-layout:fixed}
-  #questionsTable td{word-break:keep-all;overflow-wrap:anywhere;line-height:1.45}
+  th{color:#777;font-weight:700}
   .muted{color:#999}.small{font-size:12px}
   .badge{display:inline-block;background:#e8f3ff;color:#1b5dbf;border-radius:999px;padding:2px 8px;font-size:11px;font-weight:700}
   .badge.ok{background:#e9f8ee;color:#1c8a45}
@@ -5279,10 +5325,10 @@ app.get('/admin', (req, res) => {
       <div style="overflow-x:auto" class="gap">
         <table id="questionsTable">
           <colgroup>
-            <col style="width:85px"><col style="width:70px"><col style="width:80px">
-            <col style="width:210px"><col style="width:420px">
-            <col style="width:70px"><col style="width:150px"><col style="width:240px">
-            <col style="width:140px"><col style="width:140px"><col style="width:140px"><col style="width:65px">
+            <col style="width:78px"><col style="width:56px"><col style="width:64px">
+            <col style="width:150px"><col style="min-width:320px">
+            <col style="width:56px"><col style="width:110px"><col style="width:220px">
+            <col style="width:90px"><col style="width:90px"><col style="width:90px"><col style="width:50px">
           </colgroup>
           <thead><tr><th>일자</th><th>시간</th><th>입력유형</th><th>질문/버튼</th><th>실제 답변 내용</th><th>결과</th><th>기존 연결</th><th>교정 학습</th><th>버튼 출발블록</th><th>현재 스킬블록</th><th>직전블록</th><th></th></tr></thead>
           <tbody></tbody>
@@ -5540,7 +5586,7 @@ async function loadQuestions(page){
       '<td>'+esc(e.date)+'</td>'+ 
       '<td>'+esc(e.time)+'</td>'+ 
       '<td>'+(e.inputType === '버튼클릭' ? '<span class="badge">버튼클릭</span>' : (e.inputType === '직접입력' ? '<span class="badge ok">직접입력</span>' : '<span class="small muted">'+esc(e.inputType||'기록없음')+'</span>'))+'</td>'+
-      '<td class="small" style="white-space:normal" title="'+esc(e.buttonText || e.query)+'">'+esc(e.buttonText || e.query)+'</td>'+ 
+      '<td class="small" style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(e.buttonText || e.query)+'">'+esc(e.buttonText || e.query)+'</td>'+ 
       '<td class="small" style="white-space:normal;word-break:break-word" title="'+esc(e.answerText||'')+'">'+esc(e.answerText ? (e.answerText.length>220 ? e.answerText.slice(0,220)+'…' : e.answerText) : '-')+'</td>'+
       '<td>'+(e.matched ? '<span class="badge ok">매칭</span>' : '<span class="badge" style="background:#fde8e8;color:#b02a2a">미매칭</span>')+'</td>'+ 
       '<td class="small muted">'+esc(e.matchedTitle||'-')+'</td>'+ 
