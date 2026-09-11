@@ -2402,6 +2402,12 @@ function buildKakaoButtonsFromScenarioButtons(buttons) {
   return (buttons || []).map(b => {
     const label = String(b.label || '').slice(0, 14) || '바로가기';
     const value = String(b.value || '');
+    const menuLabel = compactText(label);
+    // 처음 화면의 핵심 메뉴는 오래된 블록 ID를 직접 타지 않고 서버 라우팅을 거칩니다.
+    // 특히 '증명서 발급'이 다른 블록 ID(업무담당자 등)로 열리는 문제를 방지합니다.
+    if (/^(제증명|제증명안내|제증명발급|증명서|증명서발급)$/.test(menuLabel)) {
+      return { label, action: 'message', messageText: '제증명' };
+    }
     // 전학 학교급 버튼은 저장된 카카오 블록 ID로 직접 이동시키지 않습니다.
     // 오픈빌더에서 블록을 복사/재생성하면 ID가 달라져 엉뚱한 블록이 열릴 수 있으므로,
     // 학교급 문구를 스킬 서버로 다시 보내 현재 라우팅 규칙으로 처리합니다.
@@ -2589,7 +2595,17 @@ function buildBlockQuickReplies(block, blocks) {
     if (/초등학교|초등학생/.test(compact) && /전학|전입학/.test(compact)) return '초등학교 전학';
     return '';
   };
+  const mainMenuMessageForLabel = (label) => {
+    const compact = compactText(label || '');
+    if (/^(제증명|제증명안내|제증명발급|증명서|증명서발급)$/.test(compact)) return '제증명';
+    return '';
+  };
   (block.quick_replies || []).forEach(qr => {
+    const mainMenuMessage = mainMenuMessageForLabel(qr.label);
+    if (mainMenuMessage) {
+      out.push({ label:quickLabel(qr.label || '제증명'), action:'message', messageText:mainMenuMessage });
+      return;
+    }
     // 전학 학교급 버튼은 블록 ID 대신 문구를 서버로 보내 학교급 규칙으로 처리합니다.
     const transferMessage = transferMessageForLabel(qr.label);
     if (transferMessage) {
@@ -2608,6 +2624,11 @@ function buildBlockQuickReplies(block, blocks) {
   });
   (block.responses || []).forEach(r => (r.buttons || []).forEach(b => {
     if (b.type !== 'block') return;
+    const mainMenuMessage = mainMenuMessageForLabel(b.label);
+    if (mainMenuMessage) {
+      out.push({ label:quickLabel(b.label || '제증명'), action:'message', messageText:mainMenuMessage });
+      return;
+    }
     const transferMessage = transferMessageForLabel(b.label);
     if (transferMessage) {
       out.push({ label:quickLabel(b.label || transferMessage), action:'message', messageText:transferMessage });
@@ -2802,11 +2823,13 @@ function withGuideQuickReply(payload, utterance) {
   );
 
   if (!exists) {
-    // 자동 안내 버튼은 잘 보이도록 첫 번째에 둡니다.
+    // 카카오 실제 채팅방의 quickReplies는 webLink 액션을 안정적으로 표시하지 않습니다.
+    // 봇 테스트에서만 보이고 실제 카톡에서 버튼 묶음 전체가 사라지는 일을 막기 위해
+    // 일반 메시지 액션으로 보내고, 다음 턴에서 해당 안내 블록을 정상 라우팅합니다.
     quickReplies.unshift({
       label: guide.label,
-      action: 'webLink',
-      webLinkUrl: guide.url
+      action: 'message',
+      messageText: guide.label
     });
   }
 
