@@ -341,7 +341,7 @@ function scoreAgainst(query, target) {
 }
 
 const EXACT_QUERY_ROUTES = Object.freeze({
-  '제증명':'제증명 종합 안내','제증명안내':'제증명 종합 안내','제증명발급':'제증명 종합 안내','증명서':'제증명 종합 안내','증명서발급':'제증명 종합 안내','증명서발급제증명':'제증명 종합 안내',
+  '제증명':'제증명 종합 안내','제증명안내':'제증명 종합 안내','제증명발급':'제증명 종합 안내','증명서':'제증명 종합 안내','증명서발급':'제증명 종합 안내',
   '검정고시':'검정고시 종합 안내','검정고시안내':'검정고시 종합 안내','검고':'검정고시 종합 안내','검정고사':'검정고시 종합 안내',
   '꿈디딤':'꿈디딤카드 종합 안내','꿈디딤카드':'꿈디딤카드 종합 안내','다자녀':'다자녀카드사업안내','다자녀지원':'다자녀카드사업안내',
   '수능':'수능 원서접수','수능접수':'수능 원서접수','학원':'학원안내','학원교습소':'학원안내','교습소':'학원안내',
@@ -480,20 +480,6 @@ function smartMatch(rawQuery, blocks) {
   if (!raw) return {matched:false, idx:-1, score:0, reason:'empty', candidates:[]};
 
   const compact = compactText(raw);
-  // '처음으로'와 학교급 선택 버튼은 관리자 학습이나 유사도보다 무조건 우선합니다.
-  const forcedMainMenuRoutes = {
-    '증명서발급제증명': '제증명 종합 안내',
-    '고등학교전입학': '고등학교전입학',
-    '고등학교전학': '고등학교전입학',
-    '중학교전입학': '초중학교전입학',
-    '중학교전학': '초중학교전입학',
-    '초등학교전입학': '초중학교전입학',
-    '초등학교전학': '초중학교전입학'
-  };
-  if (forcedMainMenuRoutes[compact]) {
-    const forced = routeByTitle(forcedMainMenuRoutes[compact], blocks, 'forced-main-menu');
-    if (forced) return forced;
-  }
   // 관리자가 대시보드에서 직접 교정한 문장은 하드코딩된 규칙보다 먼저 적용합니다.
   const learned = readJson(LEARNED_PATH, []);
   for (let i = learned.length - 1; i >= 0; i--) {
@@ -2416,27 +2402,6 @@ function buildKakaoButtonsFromScenarioButtons(buttons) {
   return (buttons || []).map(b => {
     const label = String(b.label || '').slice(0, 14) || '바로가기';
     const value = String(b.value || '');
-    const menuLabel = compactText(label);
-    // 사용자가 만들지 않은 서버 자동 '자주 묻는 질문' 버튼은 카드에서도 모두 제거합니다.
-    if (menuLabel.includes('자주묻는질문')) return null;
-    // 처음 화면의 핵심 메뉴는 오래된 블록 ID를 직접 타지 않고 서버 라우팅을 거칩니다.
-    // 특히 '증명서 발급'이 다른 블록 ID(업무담당자 등)로 열리는 문제를 방지합니다.
-    if (/^(제증명|제증명안내|제증명발급|증명서|증명서발급|증명서발급제증명)$/.test(menuLabel)) {
-      return { label, action: 'message', messageText: '제증명' };
-    }
-    // 전학 학교급 버튼은 저장된 카카오 블록 ID로 직접 이동시키지 않습니다.
-    // 오픈빌더에서 블록을 복사/재생성하면 ID가 달라져 엉뚱한 블록이 열릴 수 있으므로,
-    // 학교급 문구를 스킬 서버로 다시 보내 현재 라우팅 규칙으로 처리합니다.
-    const compactLabel = compactText(label);
-    if (/고등학교|고교|고등학생/.test(compactLabel) && /전학|전입학/.test(compactLabel)) {
-      return { label, action: 'message', messageText: '고등학교 전학' };
-    }
-    if (/중학교|중학생/.test(compactLabel) && /전학|전입학/.test(compactLabel)) {
-      return { label, action: 'message', messageText: '중학교 전학' };
-    }
-    if (/초등학교|초등학생/.test(compactLabel) && /전학|전입학/.test(compactLabel)) {
-      return { label, action: 'message', messageText: '초등학교 전학' };
-    }
     if (b.type === 'url') {
       return { label, action: 'webLink', webLinkUrl: value };
     }
@@ -2503,7 +2468,7 @@ function buildKakaoOutputsFromScenarioBlock(block) {
 function makeKakaoQuickReply(block) {
   const title = String((block && block.title) || '').trim();
   const blockId = getKakaoBlockId(block);
-  const label = Array.from(title).slice(0, 14).join('');
+  const label = title.slice(0, 20);
 
   if (blockId) {
     return {
@@ -2580,12 +2545,19 @@ function kakaoTransferSchoolLevelResponse(blocks) {
   const middle = blocks.find(b => (b.title || '').trim() === '초중학교전입학');
 
   if (high) {
-    quickReplies.push({ label: '고등학교 전입학', action: 'message', messageText: '고등학교 전학' });
+    const q = makeKakaoQuickReply(high);
+    q.label = '고등학교 전입학';
+    quickReplies.push(q);
   }
   if (middle) {
-    // 학교급 선택은 블록 ID가 아닌 메시지로 서버에 되돌려 보내 정확한 규칙으로 연결합니다.
-    quickReplies.push({ label: '중학교 전입학', action: 'message', messageText: '중학교 전학' });
-    quickReplies.push({ label: '초등학교 전입학', action: 'message', messageText: '초등학교 전학' });
+    const q = makeKakaoQuickReply(middle);
+    // 실제 연결 블록은 '초중학교전입학'이지만 이용자에게는 중학교 선택지로 표시
+    q.label = '중학교 전입학';
+    quickReplies.push(q);
+
+    const elementary = makeKakaoQuickReply(middle);
+    elementary.label = '초등학교 전입학';
+    quickReplies.push(elementary);
   }
 
   quickReplies.push({ label: '☎ 콜센터 연결', action: 'message', messageText: '콜센터' });
@@ -2601,9 +2573,6 @@ function kakaoTransferSchoolLevelResponse(blocks) {
 
 function buildBlockQuickReplies(block, blocks) {
   const out = [];
-  // 카카오 실제 앱의 바로연결 버튼 라벨은 14자 이하여야 합니다.
-  // 봇 테스트에서는 긴 라벨도 보이지만 실제 카톡에서는 바로연결 묶음이 빠질 수 있습니다.
-  const quickLabel = (value) => Array.from(String(value || '')).slice(0, 14).join('');
   const transferMessageForLabel = (label) => {
     const compact = compactText(label || '');
     if (/고등학교|고교|고등학생/.test(compact) && /전학|전입학/.test(compact)) return '고등학교 전학';
@@ -2611,69 +2580,43 @@ function buildBlockQuickReplies(block, blocks) {
     if (/초등학교|초등학생/.test(compact) && /전학|전입학/.test(compact)) return '초등학교 전학';
     return '';
   };
-  const mainMenuMessageForLabel = (label) => {
-    const compact = compactText(label || '');
-    if (/^(제증명|제증명안내|제증명발급|증명서|증명서발급|증명서발급제증명)$/.test(compact)) return '제증명';
-    return '';
-  };
-  const isUnwantedCertificateFaq = (label) => {
-    const parent = compactText((block && block.title) || '');
-    const item = compactText(label || '');
-    return /제증명|증명서/.test(parent) && /(?:제증명|증명서).*자주묻는질문/.test(item);
-  };
   (block.quick_replies || []).forEach(qr => {
-    if (compactText(qr.label || '').includes('자주묻는질문')) return;
-    if (isUnwantedCertificateFaq(qr.label)) return;
-    const mainMenuMessage = mainMenuMessageForLabel(qr.label);
-    if (mainMenuMessage) {
-      out.push({ label:quickLabel(qr.label || '제증명'), action:'message', messageText:mainMenuMessage });
-      return;
-    }
     // 전학 학교급 버튼은 블록 ID 대신 문구를 서버로 보내 학교급 규칙으로 처리합니다.
     const transferMessage = transferMessageForLabel(qr.label);
     if (transferMessage) {
-      out.push({ label:quickLabel(qr.label || transferMessage), action:'message', messageText:transferMessage });
+      out.push({ label:String(qr.label || transferMessage).slice(0,20), action:'message', messageText:transferMessage });
       return;
     }
     // 이용자에게 보이는 label이 현재 title과 더 잘 맞는 경우가 많아 label을 먼저 확인
     const target = findBlockForKakaoReference(qr.label, blocks) || findBlockForKakaoReference(qr.block, blocks);
     if (target) {
       const item = makeKakaoQuickReply(target);
-      item.label = quickLabel(qr.label || target.title || '');
+      item.label = String(qr.label || target.title || '').slice(0,20);
       out.push(item);
     } else if (qr.label) {
-      out.push({ label:quickLabel(qr.label), action:'message', messageText:qr.label });
+      out.push({ label:String(qr.label).slice(0,20), action:'message', messageText:qr.label });
     }
   });
   (block.responses || []).forEach(r => (r.buttons || []).forEach(b => {
     if (b.type !== 'block') return;
-    if (compactText(b.label || '').includes('자주묻는질문')) return;
-    // 카드 안에 이미 있는 제증명 FAQ 버튼을 노란 바로연결 버튼으로 중복 노출하지 않습니다.
-    if (isUnwantedCertificateFaq(b.label)) return;
-    const mainMenuMessage = mainMenuMessageForLabel(b.label);
-    if (mainMenuMessage) {
-      out.push({ label:quickLabel(b.label || '제증명'), action:'message', messageText:mainMenuMessage });
-      return;
-    }
     const transferMessage = transferMessageForLabel(b.label);
     if (transferMessage) {
-      out.push({ label:quickLabel(b.label || transferMessage), action:'message', messageText:transferMessage });
+      out.push({ label:String(b.label || transferMessage).slice(0,20), action:'message', messageText:transferMessage });
       return;
     }
     const target = findBlockForKakaoReference(b.value, blocks) || findBlockForKakaoReference(b.label, blocks);
     if (target) {
       const item = makeKakaoQuickReply(target);
-      item.label = quickLabel(b.label || target.title || '');
+      item.label = String(b.label || target.title || '').slice(0,20);
       out.push(item);
     } else if (b.label) {
-      out.push({ label:quickLabel(b.label), action:'message', messageText:b.label });
+      out.push({ label:String(b.label).slice(0,20), action:'message', messageText:b.label });
     }
   }));
   // 중복 제거
   const seen = new Set();
   return out.filter(x => {
-    // 같은 이름의 버튼이 quick_replies와 카드 버튼 양쪽에서 들어와도 하나만 표시합니다.
-    const key = compactText(x.label || '');
+    const key = `${x.label}|${x.blockId || x.messageText || ''}`;
     if (seen.has(key)) return false;
     seen.add(key); return true;
   }).slice(0,10);
@@ -2808,10 +2751,6 @@ function kakaoFallbackResponse(utterance, blocks, options = {}) {
 
 // 질문 내용에 따라 민원 통합안내 웹페이지 바로가기 버튼을 자동으로 붙입니다.
 function withGuideQuickReply(payload, utterance) {
-  // 자동 생성한 분야별 '자주 묻는 질문' 버튼을 사용하지 않습니다.
-  return payload;
-
-  /* 이전 자동 FAQ 버튼 로직(비활성화)
   if (!payload || !payload.template) return payload;
 
   const q = String(utterance || '').trim();
@@ -2819,20 +2758,25 @@ function withGuideQuickReply(payload, utterance) {
 
   let guide = null;
 
-  // 제증명 답변에는 이용자가 요청하지 않은 '자주 묻는 질문' 버튼을 자동 추가하지 않습니다.
-  if (/(검정고시)/i.test(q)) {
+  // 구체적인 증명서 질문은 제증명 안내를 우선합니다.
+  if (/(제증명|증명서|생활기록부|생기부|졸업증명|성적증명|재학증명|경력증명|재직증명|퇴직증명|폐교.*증명)/i.test(q)) {
     guide = {
-      label: '검정고시 자주 묻는 질문',
+      label: '🔍 증명서 자주 묻는 질문',
+      url: `${PUBLIC_BASE_URL}/certificates`
+    };
+  } else if (/(검정고시)/i.test(q)) {
+    guide = {
+      label: '🔍 검정고시 자주 묻는 질문',
       url: `${PUBLIC_BASE_URL}/ged`
     };
   } else if (/(수능|대학수학능력시험|수학능력시험)/i.test(q)) {
     guide = {
-      label: '수능 자주 묻는 질문',
+      label: '🔍 수능 자주 묻는 질문',
       url: `${PUBLIC_BASE_URL}/csat`
     };
   } else if (/(전학|전입학|전입|편입학|편입)/i.test(q)) {
     guide = {
-      label: '전·입학 자주 묻는 질문',
+      label: '🔍 전·입학 자주 묻는 질문',
       url: `${PUBLIC_BASE_URL}/transfer`
     };
   }
@@ -2843,28 +2787,22 @@ function withGuideQuickReply(payload, utterance) {
     ? payload.template.quickReplies.slice()
     : [];
 
-  const guideKey = compactText(guide.label || '');
-  const exists = quickReplies.some(x => {
-    const labelKey = compactText((x && x.label) || '');
-    return String((x && x.webLinkUrl) || '') === guide.url ||
-      labelKey === guideKey ||
-      (guideKey.includes('검정고시') && labelKey.includes('검정고시') && labelKey.includes('자주묻는질문'));
-  });
+  const exists = quickReplies.some(x =>
+    String((x && x.webLinkUrl) || '') === guide.url ||
+    String((x && x.label) || '') === guide.label
+  );
 
   if (!exists) {
-    // 카카오 실제 채팅방의 quickReplies는 webLink 액션을 안정적으로 표시하지 않습니다.
-    // 봇 테스트에서만 보이고 실제 카톡에서 버튼 묶음 전체가 사라지는 일을 막기 위해
-    // 일반 메시지 액션으로 보내고, 다음 턴에서 해당 안내 블록을 정상 라우팅합니다.
+    // 자동 안내 버튼은 잘 보이도록 첫 번째에 둡니다.
     quickReplies.unshift({
       label: guide.label,
-      action: 'message',
-      messageText: guide.label
+      action: 'webLink',
+      webLinkUrl: guide.url
     });
   }
 
   payload.template.quickReplies = quickReplies.slice(0, 10);
   return payload;
-  */
 }
 
 function withStaffSearchQuickReply(payload) {
