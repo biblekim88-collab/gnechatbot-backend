@@ -243,7 +243,7 @@ const EXTRA_UTTERANCES = Object.freeze({
   '꿈디딤카드 결제오류': ['꿈디딤카드 결제가 안돼요','꿈디딤카드 카드 결제 오류','꿈디딤카드 사용이 안돼요'],
   '꿈디딤카드 미지급': ['꿈디딤 포인트가 안 들어왔어요','꿈디딤카드 포인트 미지급','지원금 아직 안 들어왔어요 꿈디딤'],
   '꿈디딤카드 잔액 확인': ['꿈디딤카드 잔액 얼마 남았어요','꿈디딤 포인트 잔액 확인','꿈디딤 남은 금액'],
-  '고등학교전입학': ['창원 살다가 진주로 이사했는데 고등학생 전학하고 싶어요','고등학생 아이가 이사해서 학교를 옮기고 싶어요','고등학교 전학 절차 알려줘','다른 지역으로 이사해서 고등학교 전학'],
+  '고등학교전입학 안내': ['창원 살다가 진주로 이사했는데 고등학생 전학하고 싶어요','고등학생 아이가 이사해서 학교를 옮기고 싶어요','고등학교 전학 절차 알려줘','다른 지역으로 이사해서 고등학교 전학'],
   '고등학교전입학제출서류': ['고등학교 전학할 때 서류 뭐 필요해요','고등학교 전입학 준비서류','고등학생 전학 제출서류 알려줘'],
   '초중학교전입학': ['중학생인데 이사해서 전학가고 싶어요','초등학생 전학 절차 알려줘','중학교 전학 어떻게 해요','초등학교 이사 전학'],
   '진로변경 전입학': ['특성화고에서 일반고로 옮기고 싶어요','일반고에서 특성화고 전학 가능한가요','진로변경 전입학 어떻게 해요'],
@@ -341,11 +341,15 @@ function scoreAgainst(query, target) {
 }
 
 const EXACT_QUERY_ROUTES = Object.freeze({
-  '제증명':'제증명 종합 안내','제증명안내':'제증명 종합 안내','제증명발급':'제증명 종합 안내','증명서':'제증명 종합 안내','증명서발급':'제증명 종합 안내',
+  '제증명':'제증명 종합 안내','제증명안내':'제증명 종합 안내','제증명발급':'제증명 종합 안내','증명서':'제증명 종합 안내','증명서발급':'제증명 종합 안내','증명서발급제증명':'제증명 종합 안내',
   '검정고시':'검정고시 종합 안내','검정고시안내':'검정고시 종합 안내','검고':'검정고시 종합 안내','검정고사':'검정고시 종합 안내',
   '꿈디딤':'꿈디딤카드 종합 안내','꿈디딤카드':'꿈디딤카드 종합 안내','다자녀':'다자녀카드사업안내','다자녀지원':'다자녀카드사업안내',
   '수능':'수능 원서접수','수능접수':'수능 원서접수','학원':'학원안내','학원교습소':'학원안내','교습소':'학원안내',
-  '정보공개':'정보공개청구','팩스':'팩스민원','팩스민원':'팩스민원','스승찾기':'스승찾기','아이북':'아이톡톡아이북','학폭':'학교폭력 불복절차'
+  '정보공개':'정보공개청구','팩스':'팩스민원','팩스민원':'팩스민원','스승찾기':'스승찾기','아이북':'아이톡톡아이북','학폭':'학교폭력 불복절차',
+  // 전학 메뉴 버튼 문구는 유사도 판정에 맡기지 않고 학교급별 블록으로 고정합니다.
+  '고등학교전학':'고등학교전입학 안내','고등학교전입학':'고등학교전입학 안내','고등학교전입학안내':'고등학교전입학 안내',
+  '중학교전학':'초중학교전입학','중학교전입학':'초중학교전입학',
+  '초등학교전학':'초중학교전입학','초등학교전입학':'초중학교전입학'
 });
 
 function titleIndexMap(blocks) {
@@ -383,8 +387,9 @@ function intentRoute(rawQuery, blocks) {
     if (has('창원') && has('중학교') && has('담당자','전화','번호','연락처')) return routeByTitle('창원 중학교 전입학 담당자', blocks, 'intent');
     if (has('고등학교') && has('담당자','전화','번호','연락처')) return routeByTitle('고등학교 전학 담당자', blocks, 'intent');
     if (has('고등학교') && has('서류','제출서류','준비물','구비서류')) return routeByTitle('고등학교전입학제출서류', blocks, 'intent');
-    if (has('초등학교','중학교')) return routeByTitle('초중학교전입학', blocks, 'intent');
-    if (has('고등학교')) return routeByTitle('고등학교전입학', blocks, 'intent');
+    // 학교급 판별은 고등학교를 먼저 처리합니다.
+    if (has('고등학교','고교','고등학생')) return routeByTitle('고등학교전입학 안내', blocks, 'intent');
+    if (has('초등학교','초등학생','중학교','중학생')) return routeByTitle('초중학교전입학', blocks, 'intent');
   }
 
   // 고입 선배정/재배정
@@ -475,6 +480,21 @@ function smartMatch(rawQuery, blocks) {
   if (!raw) return {matched:false, idx:-1, score:0, reason:'empty', candidates:[]};
 
   const compact = compactText(raw);
+  // '처음으로'와 학교급 선택 버튼은 관리자 학습이나 유사도보다 무조건 우선합니다.
+  const forcedMainMenuRoutes = {
+    '증명서발급제증명': '제증명 종합 안내',
+    '고등학교전입학': '고등학교전입학 안내',
+    '고등학교전입학안내': '고등학교전입학 안내',
+    '고등학교전학': '고등학교전입학 안내',
+    '중학교전입학': '초중학교전입학',
+    '중학교전학': '초중학교전입학',
+    '초등학교전입학': '초중학교전입학',
+    '초등학교전학': '초중학교전입학'
+  };
+  if (forcedMainMenuRoutes[compact]) {
+    const forced = routeByTitle(forcedMainMenuRoutes[compact], blocks, 'forced-main-menu');
+    if (forced) return forced;
+  }
   // 관리자가 대시보드에서 직접 교정한 문장은 하드코딩된 규칙보다 먼저 적용합니다.
   const learned = readJson(LEARNED_PATH, []);
   for (let i = learned.length - 1; i >= 0; i--) {
@@ -539,6 +559,9 @@ const KAKAO_FAIL_STREAKS = new Map();
 // 전학 관련 질문의 연속 실패 횟수는 별도로 관리합니다.
 // 고등학교 전학 맥락에서 2회 이상 실패하면 참고용 AI 상담 링크를 함께 노출합니다.
 const KAKAO_TRANSFER_FAIL_STREAKS = new Map();
+// '전학' 안내 후 이용자가 학교급만 입력해도 앞선 전학 맥락을 이어갑니다.
+const KAKAO_TRANSFER_LEVEL_PENDING = new Map();
+const KAKAO_TRANSFER_LEVEL_PENDING_TTL_MS = 10 * 60 * 1000;
 const FAIL_STREAK_TTL_MS = 30 * 60 * 1000;
 const FAIL_STREAK_ESCALATE_AT = 2;
 const TRANSFER_AI_ESCALATE_AT = 2;
@@ -2059,6 +2082,30 @@ function resetKakaoTransferFailStreak(kakaoUserId) {
   KAKAO_TRANSFER_FAIL_STREAKS.delete(kakaoUserId);
 }
 
+function markKakaoTransferLevelPending(kakaoUserId) {
+  if (!kakaoUserId) return;
+  KAKAO_TRANSFER_LEVEL_PENDING.set(kakaoUserId, { updatedAt: Date.now() });
+}
+
+function consumePendingTransferLevel(kakaoUserId, rawQuery) {
+  if (!kakaoUserId) return null;
+  const entry = KAKAO_TRANSFER_LEVEL_PENDING.get(kakaoUserId);
+  if (!entry) return null;
+  if (Date.now() - entry.updatedAt > KAKAO_TRANSFER_LEVEL_PENDING_TTL_MS) {
+    KAKAO_TRANSFER_LEVEL_PENDING.delete(kakaoUserId);
+    return null;
+  }
+
+  const q = compactText(expandQuery(rawQuery));
+  let title = null;
+  if (/^(고등학교|고교)$/.test(q)) title = '고등학교전입학 안내';
+  else if (/^(중학교|중등)$/.test(q)) title = '초중학교전입학';
+  else if (/^(초등학교|초등)$/.test(q)) title = '초중학교전입학';
+
+  if (title) KAKAO_TRANSFER_LEVEL_PENDING.delete(kakaoUserId);
+  return title;
+}
+
 function getTransferFailureContext(rawQuery, blocks, bestCandidate) {
   const q = compactText(expandQuery(rawQuery));
   const title = bestCandidate && bestCandidate.idx >= 0 && blocks[bestCandidate.idx]
@@ -2282,6 +2329,7 @@ const KAKAO_BLOCK_ID_OVERRIDES = Object.freeze({
   "꿈디딤카드 미지급": "6a62c9a14ea9d954e498a5da",
   "꿈디딤카드 잔액 확인": "6a62cb3068acf42eb95f6e21",
   "고등학교전입학": "6a62cda8fd013545b644a4e4",
+  "고등학교전입학 안내": "6a62cda8fd013545b644a4e4",
   "고등학교전입학제출서류": "6a62ce0fb11ba04bddeae0bb",
   "초중학교전입학": "6a62cf5e95f722d77d945485",
   "진로변경 전입학": "6a686e23bfeff424f8539d2d",
@@ -2370,6 +2418,27 @@ function buildKakaoButtonsFromScenarioButtons(buttons) {
   return (buttons || []).map(b => {
     const label = String(b.label || '').slice(0, 14) || '바로가기';
     const value = String(b.value || '');
+    const menuLabel = compactText(label);
+    // 사용자가 만들지 않은 서버 자동 '자주 묻는 질문' 버튼은 카드에서도 모두 제거합니다.
+    if (menuLabel.includes('자주묻는질문')) return null;
+    // 처음 화면의 핵심 메뉴는 오래된 블록 ID를 직접 타지 않고 서버 라우팅을 거칩니다.
+    // 특히 '증명서 발급'이 다른 블록 ID(업무담당자 등)로 열리는 문제를 방지합니다.
+    if (/^(제증명|제증명안내|제증명발급|증명서|증명서발급|증명서발급제증명)$/.test(menuLabel)) {
+      return { label, action: 'message', messageText: '제증명' };
+    }
+    // 전학 학교급 버튼은 저장된 카카오 블록 ID로 직접 이동시키지 않습니다.
+    // 오픈빌더에서 블록을 복사/재생성하면 ID가 달라져 엉뚱한 블록이 열릴 수 있으므로,
+    // 학교급 문구를 스킬 서버로 다시 보내 현재 라우팅 규칙으로 처리합니다.
+    const compactLabel = compactText(label);
+    if (/고등학교|고교|고등학생/.test(compactLabel) && /전학|전입학/.test(compactLabel)) {
+      return { label, action: 'message', messageText: '고등학교 전학' };
+    }
+    if (/중학교|중학생/.test(compactLabel) && /전학|전입학/.test(compactLabel)) {
+      return { label, action: 'message', messageText: '중학교 전학' };
+    }
+    if (/초등학교|초등학생/.test(compactLabel) && /전학|전입학/.test(compactLabel)) {
+      return { label, action: 'message', messageText: '초등학교 전학' };
+    }
     if (b.type === 'url') {
       return { label, action: 'webLink', webLinkUrl: value };
     }
@@ -2436,7 +2505,7 @@ function buildKakaoOutputsFromScenarioBlock(block) {
 function makeKakaoQuickReply(block) {
   const title = String((block && block.title) || '').trim();
   const blockId = getKakaoBlockId(block);
-  const label = title.slice(0, 20);
+  const label = Array.from(title).slice(0, 14).join('');
 
   if (blockId) {
     return {
@@ -2455,6 +2524,7 @@ function makeKakaoQuickReply(block) {
 }
 
 const LEGACY_BLOCK_REFERENCE_ALIASES = Object.freeze({
+  '고등학교전입학':'고등학교전입학 안내',
   '경남교육청위치':'경남교육청 위치',
   '제증명 발급':'제증명 종합 안내',
   '검정고시':'검정고시 종합 안내',
@@ -2509,19 +2579,16 @@ function needsTransferSchoolLevel(rawQuery) {
 
 function kakaoTransferSchoolLevelResponse(blocks) {
   const quickReplies = [];
-  const high = blocks.find(b => (b.title || '').trim() === '고등학교전입학');
+  const high = blocks.find(b => (b.title || '').trim() === '고등학교전입학 안내');
   const middle = blocks.find(b => (b.title || '').trim() === '초중학교전입학');
 
   if (high) {
-    const q = makeKakaoQuickReply(high);
-    q.label = '고등학교 전입학';
-    quickReplies.push(q);
+    quickReplies.push({ label: '고등학교 전입학', action: 'message', messageText: '고등학교 전학' });
   }
   if (middle) {
-    const q = makeKakaoQuickReply(middle);
-    // 실제 연결 블록은 '초중학교전입학'이지만 이용자에게는 중학교 선택지로 표시
-    q.label = '중학교 전입학';
-    quickReplies.push(q);
+    // 학교급 선택은 블록 ID가 아닌 메시지로 서버에 되돌려 보내 정확한 규칙으로 연결합니다.
+    quickReplies.push({ label: '중학교 전입학', action: 'message', messageText: '중학교 전학' });
+    quickReplies.push({ label: '초등학교 전입학', action: 'message', messageText: '초등학교 전학' });
   }
 
   quickReplies.push({ label: '☎ 콜센터 연결', action: 'message', messageText: '콜센터' });
@@ -2537,51 +2604,167 @@ function kakaoTransferSchoolLevelResponse(blocks) {
 
 function buildBlockQuickReplies(block, blocks) {
   const out = [];
+  // 카카오 실제 앱의 바로연결 버튼 라벨은 14자 이하여야 합니다.
+  // 봇 테스트에서는 긴 라벨도 보이지만 실제 카톡에서는 바로연결 묶음이 빠질 수 있습니다.
+  const quickLabel = (value) => Array.from(String(value || '')).slice(0, 14).join('');
+  const transferMessageForLabel = (label) => {
+    const compact = compactText(label || '');
+    if (/고등학교|고교|고등학생/.test(compact) && /전학|전입학/.test(compact)) return '고등학교 전학';
+    if (/중학교|중학생/.test(compact) && /전학|전입학/.test(compact)) return '중학교 전학';
+    if (/초등학교|초등학생/.test(compact) && /전학|전입학/.test(compact)) return '초등학교 전학';
+    return '';
+  };
+  const mainMenuMessageForLabel = (label) => {
+    const compact = compactText(label || '');
+    if (/^(제증명|제증명안내|제증명발급|증명서|증명서발급|증명서발급제증명)$/.test(compact)) return '제증명';
+    return '';
+  };
+  const isUnwantedCertificateFaq = (label) => {
+    const parent = compactText((block && block.title) || '');
+    const item = compactText(label || '');
+    return /제증명|증명서/.test(parent) && /(?:제증명|증명서).*자주묻는질문/.test(item);
+  };
   (block.quick_replies || []).forEach(qr => {
+    if (compactText(qr.label || '').includes('자주묻는질문')) return;
+    if (isUnwantedCertificateFaq(qr.label)) return;
+    const mainMenuMessage = mainMenuMessageForLabel(qr.label);
+    if (mainMenuMessage) {
+      out.push({ label:quickLabel(qr.label || '제증명'), action:'message', messageText:mainMenuMessage });
+      return;
+    }
+    // 전학 학교급 버튼은 블록 ID 대신 문구를 서버로 보내 학교급 규칙으로 처리합니다.
+    const transferMessage = transferMessageForLabel(qr.label);
+    if (transferMessage) {
+      out.push({ label:quickLabel(qr.label || transferMessage), action:'message', messageText:transferMessage });
+      return;
+    }
     // 이용자에게 보이는 label이 현재 title과 더 잘 맞는 경우가 많아 label을 먼저 확인
     const target = findBlockForKakaoReference(qr.label, blocks) || findBlockForKakaoReference(qr.block, blocks);
     if (target) {
       const item = makeKakaoQuickReply(target);
-      item.label = String(qr.label || target.title || '').slice(0,20);
+      item.label = quickLabel(qr.label || target.title || '');
       out.push(item);
     } else if (qr.label) {
-      out.push({ label:String(qr.label).slice(0,20), action:'message', messageText:qr.label });
+      out.push({ label:quickLabel(qr.label), action:'message', messageText:qr.label });
     }
   });
   (block.responses || []).forEach(r => (r.buttons || []).forEach(b => {
     if (b.type !== 'block') return;
+    if (compactText(b.label || '').includes('자주묻는질문')) return;
+    // 카드 안에 이미 있는 제증명 FAQ 버튼을 노란 바로연결 버튼으로 중복 노출하지 않습니다.
+    if (isUnwantedCertificateFaq(b.label)) return;
+    const mainMenuMessage = mainMenuMessageForLabel(b.label);
+    if (mainMenuMessage) {
+      out.push({ label:quickLabel(b.label || '제증명'), action:'message', messageText:mainMenuMessage });
+      return;
+    }
+    const transferMessage = transferMessageForLabel(b.label);
+    if (transferMessage) {
+      out.push({ label:quickLabel(b.label || transferMessage), action:'message', messageText:transferMessage });
+      return;
+    }
     const target = findBlockForKakaoReference(b.value, blocks) || findBlockForKakaoReference(b.label, blocks);
     if (target) {
       const item = makeKakaoQuickReply(target);
-      item.label = String(b.label || target.title || '').slice(0,20);
+      item.label = quickLabel(b.label || target.title || '');
       out.push(item);
     } else if (b.label) {
-      out.push({ label:String(b.label).slice(0,20), action:'message', messageText:b.label });
+      out.push({ label:quickLabel(b.label), action:'message', messageText:b.label });
     }
   }));
   // 중복 제거
   const seen = new Set();
-  const deduped = out.filter(x => {
-    const key = `${x.label}|${x.blockId || x.messageText || ''}`;
+  return out.filter(x => {
+    // 같은 이름의 버튼이 quick_replies와 카드 버튼 양쪽에서 들어와도 하나만 표시합니다.
+    const key = compactText(x.label || '');
     if (seen.has(key)) return false;
     seen.add(key); return true;
-  });
+  }).slice(0,10);
+}
 
-  // 고등학교 전입학 안내 화면 하단 바로가기에는
-  // '초중학교 전입학' 버튼 하나만 남깁니다.
-  // 본문/카드(고등학교 전입학 안내, AI 상담)는 그대로 유지합니다.
-  if (String((block && block.title) || '').trim() === '고등학교전입학') {
-    const elementaryMiddle = blocks.find(b => String((b && b.title) || '').trim() === '초중학교전입학');
-    if (elementaryMiddle) {
-      const item = makeKakaoQuickReply(elementaryMiddle);
-      item.label = '초중학교 전입학';
-      item.messageText = '초중학교 전입학';
-      return [item];
-    }
-    return [{ label: '초중학교 전입학', action: 'message', messageText: '초중학교 전입학' }];
+// 처음 화면 아래에 항상 보여줄 주요 민원 메뉴입니다.
+// scenarios.json의 버튼 형식이 block/text 등으로 달라도 노란 바로연결 버튼으로 표시되게 합니다.
+function buildMainMenuQuickReplies(blocks) {
+  const required = [
+    { label:'제증명', messageText:'제증명' },
+    { label:'검정고시', messageText:'검정고시' },
+    { label:'전입학', messageText:'전학' },
+    { label:'수능 원서접수', messageText:'수능 원서접수' },
+    { label:'다자녀 지원', messageText:'다자녀' },
+    { label:'정보공개', messageText:'정보공개' },
+    { label:'업무담당자', messageText:'업무담당자' },
+    { label:'1:1 채팅상담', messageText:'1:1 채팅상담' }
+  ].map(x => ({ label:x.label, action:'message', messageText:x.messageText }));
+
+  const welcomeBlock = blocks.find(b => (b.title || '').trim() === '챗봇 이용 안내');
+  const scenarioMenus = welcomeBlock ? buildBlockQuickReplies(welcomeBlock, blocks) : [];
+  const merged = [...required, ...scenarioMenus];
+  const seen = new Set();
+  return merged.filter(q => {
+    const key = compactText(q.label || '');
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, 10);
+}
+
+function kakaoWelcomeResponse(blocks) {
+  const welcomeBlock = blocks.find(b => (b.title || '').trim() === '챗봇 이용 안내');
+  let outputs = welcomeBlock ? buildKakaoOutputsFromScenarioBlock(welcomeBlock) : [];
+  // 카카오 스킬 응답 outputs 제한을 지킵니다.
+  outputs = outputs.slice(0, 3);
+  if (!outputs.length) {
+    outputs = [{ simpleText:{ text:'궁금한 민원 분야를 아래에서 선택해 주세요.' } }];
   }
+  return {
+    version:'2.0',
+    template:{ outputs, quickReplies:buildMainMenuQuickReplies(blocks) }
+  };
+}
 
-  return deduped.slice(0,10);
+// 카카오로 내보내기 직전 전학 학교급 버튼을 최종 보정합니다.
+// 시나리오의 과거 blockId나 하드코딩된 override가 남아 있어도 학교급별 메시지로 강제합니다.
+function sanitizeTransferButtons(payload) {
+  if (!payload || !payload.template) return payload;
+  const fix = (button) => {
+    if (!button) return button;
+    const label = compactText(button.label || '');
+    let messageText = '';
+    if (/(고등학교|고교|고등학생)/.test(label) && /(전입학|전학)/.test(label)) messageText = '고등학교 전학';
+    else if (/(중학교|중학생)/.test(label) && /(전입학|전학)/.test(label)) messageText = '중학교 전학';
+    else if (/(초등학교|초등학생)/.test(label) && /(전입학|전학)/.test(label)) messageText = '초등학교 전학';
+    if (!messageText) return button;
+    return { label: button.label, action: 'message', messageText };
+  };
+
+  if (Array.isArray(payload.template.quickReplies)) {
+    payload.template.quickReplies = payload.template.quickReplies.map(fix);
+  }
+  (payload.template.outputs || []).forEach(output => {
+    if (output.basicCard && Array.isArray(output.basicCard.buttons)) {
+      output.basicCard.buttons = output.basicCard.buttons.map(fix);
+    }
+    if (output.carousel && Array.isArray(output.carousel.items)) {
+      output.carousel.items.forEach(card => {
+        if (card && Array.isArray(card.buttons)) card.buttons = card.buttons.map(fix);
+      });
+    }
+  });
+  return payload;
+}
+
+// 고등학교전입학 안내 아래 바로연결 버튼은 '초중학교 전입학' 하나만 남깁니다.
+// 카드 내부의 고등학교 누리집/AI 상담 버튼은 건드리지 않습니다.
+function keepOnlyElementaryMiddleTransferQuickReply(payload, utterance) {
+  if (!payload || !payload.template) return payload;
+  const q = compactText(utterance || '');
+  if (!/^(고등학교전입학|고등학교전입학안내|고등학교전학)$/.test(q)) return payload;
+  if (!Array.isArray(payload.template.quickReplies)) return payload;
+  payload.template.quickReplies = payload.template.quickReplies.filter(button => {
+    const label = compactText((button && button.label) || '');
+    return label === '초중학교전입학';
+  });
+  return payload;
 }
 
 function kakaoFallbackResponse(utterance, blocks, options = {}) {
@@ -2594,7 +2777,7 @@ function kakaoFallbackResponse(utterance, blocks, options = {}) {
   // 등록된 전체 바로연결 메뉴를 그대로 노출합니다.
   // 따라서 웰컴블록에서 제증명·검정고시·전입학 등의 메뉴를 수정하면 폴백에도 자동 반영됩니다.
   const welcomeBlock = blocks.find(b => (b.title || '').trim() === '챗봇 이용 안내');
-  let quickReplies = welcomeBlock ? buildBlockQuickReplies(welcomeBlock, blocks) : [];
+  let quickReplies = buildMainMenuQuickReplies(blocks);
 
   // 혹시 웰컴블록을 찾지 못하는 예외 상황에서는 기존 질문 인식 불가 안내 블록 메뉴를 사용합니다.
   if (!quickReplies.length) {
@@ -2673,6 +2856,10 @@ function kakaoFallbackResponse(utterance, blocks, options = {}) {
 
 // 질문 내용에 따라 민원 통합안내 웹페이지 바로가기 버튼을 자동으로 붙입니다.
 function withGuideQuickReply(payload, utterance) {
+  // 자동 생성한 분야별 '자주 묻는 질문' 버튼을 사용하지 않습니다.
+  return payload;
+
+  /* 이전 자동 FAQ 버튼 로직(비활성화)
   if (!payload || !payload.template) return payload;
 
   const q = String(utterance || '').trim();
@@ -2680,25 +2867,20 @@ function withGuideQuickReply(payload, utterance) {
 
   let guide = null;
 
-  // 구체적인 증명서 질문은 제증명 안내를 우선합니다.
-  if (/(제증명|증명서|생활기록부|생기부|졸업증명|성적증명|재학증명|경력증명|재직증명|퇴직증명|폐교.*증명)/i.test(q)) {
+  // 제증명 답변에는 이용자가 요청하지 않은 '자주 묻는 질문' 버튼을 자동 추가하지 않습니다.
+  if (/(검정고시)/i.test(q)) {
     guide = {
-      label: '🔍 증명서 자주 묻는 질문',
-      url: `${PUBLIC_BASE_URL}/certificates`
-    };
-  } else if (/(검정고시)/i.test(q)) {
-    guide = {
-      label: '🔍 검정고시 자주 묻는 질문',
+      label: '검정고시 자주 묻는 질문',
       url: `${PUBLIC_BASE_URL}/ged`
     };
   } else if (/(수능|대학수학능력시험|수학능력시험)/i.test(q)) {
     guide = {
-      label: '🔍 수능 자주 묻는 질문',
+      label: '수능 자주 묻는 질문',
       url: `${PUBLIC_BASE_URL}/csat`
     };
   } else if (/(전학|전입학|전입|편입학|편입)/i.test(q)) {
     guide = {
-      label: '🔍 전·입학 자주 묻는 질문',
+      label: '전·입학 자주 묻는 질문',
       url: `${PUBLIC_BASE_URL}/transfer`
     };
   }
@@ -2709,22 +2891,28 @@ function withGuideQuickReply(payload, utterance) {
     ? payload.template.quickReplies.slice()
     : [];
 
-  const exists = quickReplies.some(x =>
-    String((x && x.webLinkUrl) || '') === guide.url ||
-    String((x && x.label) || '') === guide.label
-  );
+  const guideKey = compactText(guide.label || '');
+  const exists = quickReplies.some(x => {
+    const labelKey = compactText((x && x.label) || '');
+    return String((x && x.webLinkUrl) || '') === guide.url ||
+      labelKey === guideKey ||
+      (guideKey.includes('검정고시') && labelKey.includes('검정고시') && labelKey.includes('자주묻는질문'));
+  });
 
   if (!exists) {
-    // 자동 안내 버튼은 잘 보이도록 첫 번째에 둡니다.
+    // 카카오 실제 채팅방의 quickReplies는 webLink 액션을 안정적으로 표시하지 않습니다.
+    // 봇 테스트에서만 보이고 실제 카톡에서 버튼 묶음 전체가 사라지는 일을 막기 위해
+    // 일반 메시지 액션으로 보내고, 다음 턴에서 해당 안내 블록을 정상 라우팅합니다.
     quickReplies.unshift({
       label: guide.label,
-      action: 'webLink',
-      webLinkUrl: guide.url
+      action: 'message',
+      messageText: guide.label
     });
   }
 
   payload.template.quickReplies = quickReplies.slice(0, 10);
   return payload;
+  */
 }
 
 function withStaffSearchQuickReply(payload) {
@@ -3988,7 +4176,12 @@ app.post('/api/kakao-skill', async (req, res) => {
 
   // 이 라우트에서 반환되는 모든 카카오 응답에 질문별 통합안내 버튼을 자동 적용합니다.
   const originalJson = res.json.bind(res);
-  res.json = (payload) => originalJson(withGuideQuickReply(payload, utterance));
+  res.json = (payload) => originalJson(
+    keepOnlyElementaryMiddleTransferQuickReply(
+      sanitizeTransferButtons(withGuideQuickReply(payload, utterance)),
+      utterance
+    )
+  );
   const kakaoUserId = (req.body && req.body.userRequest && req.body.userRequest.user && req.body.userRequest.user.id) || '';
   const kakaoInteraction = getKakaoInteractionMeta(req.body || {});
   const blocks = getEffectiveUtterances();
@@ -3996,9 +4189,34 @@ app.post('/api/kakao-skill', async (req, res) => {
   if (!utterance.trim()) {
     // 스킬이 발화 없이 호출된 경우에도 카카오가 넘긴 블록 흐름은 통계에 남깁니다.
     const blockLabel = kakaoInteraction.currentBlock || kakaoInteraction.lastBlock || kakaoInteraction.referrerBlock || '카카오 블록 호출';
-    const resp0 = kakaoFallbackResponse('', blocks, { failCount: 0 });
+    const resp0 = kakaoWelcomeResponse(blocks);
     trackQuery('[블록 호출]', blockLabel, true, 'kakao-block-event', 'kakao:' + kakaoUserId, kakaoInteraction, extractKakaoAnswerText(resp0));
     return res.json(withStaffSearchQuickReply(resp0));
+  }
+
+  // '처음으로'를 눌렀거나 시작 문구를 입력하면 주요 메뉴 버튼을 다시 표시합니다.
+  if (/^(처음으로|홈으로|처음|시작)$/i.test(utterance.trim())) {
+    resetKakaoFailStreak(kakaoUserId);
+    resetKakaoTransferFailStreak(kakaoUserId);
+    const homeResponse = kakaoWelcomeResponse(blocks);
+    trackQuery(utterance, '챗봇 이용 안내', true, 'kakao-home-menu', 'kakao:' + kakaoUserId, kakaoInteraction, extractKakaoAnswerText(homeResponse));
+    return res.json(homeResponse);
+  }
+
+  // 직전 '전학' 질문에서 학교급을 물은 경우, 학교급 단답을 입학이 아닌 전학 안내로 연결합니다.
+  const pendingTransferTitle = consumePendingTransferLevel(kakaoUserId, utterance);
+  if (pendingTransferTitle) {
+    const transferBlock = blocks.find(b => (b.title || '').trim() === pendingTransferTitle);
+    if (transferBlock) {
+      resetKakaoFailStreak(kakaoUserId);
+      resetKakaoTransferFailStreak(kakaoUserId);
+      const outputs = buildKakaoOutputsFromScenarioBlock(transferBlock);
+      const quickReplies = buildBlockQuickReplies(transferBlock, blocks);
+      const response = { version: '2.0', template: { outputs, quickReplies } };
+      trackQuery(utterance, transferBlock.title, true, 'kakao-transfer-level-followup', 'kakao:' + kakaoUserId, kakaoInteraction, extractKakaoAnswerText(response));
+      rememberTurn(kakaoUserId, utterance, extractKakaoAnswerText(response));
+      return res.json(withStaffSearchQuickReply(response));
+    }
   }
 
   // 담당자 메뉴 자체를 누른 경우에는 블록 파라미터나 일반 시나리오 매칭보다 먼저 처리합니다.
@@ -4089,6 +4307,7 @@ app.post('/api/kakao-skill', async (req, res) => {
   if (needsTransferSchoolLevel(utterance)) {
     resetKakaoFailStreak(kakaoUserId);
     resetKakaoTransferFailStreak(kakaoUserId);
+    markKakaoTransferLevelPending(kakaoUserId);
     const resp7 = kakaoTransferSchoolLevelResponse(blocks);
     trackQuery(utterance, '전입학 학교급 확인', true, 'kakao-clarify-transfer-level', 'kakao:' + kakaoUserId, kakaoInteraction, extractKakaoAnswerText(resp7));
     return res.json(withStaffSearchQuickReply(resp7));
@@ -5137,7 +5356,7 @@ app.get('/admin', (req, res) => {
 <title>경상남도교육청 민원 챗봇 관리자</title>
 <style>
   *{box-sizing:border-box} body{margin:0;background:#f4f6f8;font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",sans-serif;color:#222}
-  .wrap{max-width:1880px;margin:0 auto;padding:18px 20px 60px}
+  .wrap{max-width:960px;margin:0 auto;padding:18px 14px 60px}
   h1{font-size:20px;margin:0 0 14px}
   .card{background:#fff;border-radius:16px;padding:18px;box-shadow:0 2px 12px rgba(0,0,0,.06);margin-bottom:16px}
   .card h2{font-size:16px;margin:0 0 12px;display:flex;align-items:center;justify-content:space-between;gap:8px}
@@ -5153,9 +5372,7 @@ app.get('/admin', (req, res) => {
   .stat .n{font-size:22px;font-weight:800}.stat .l{font-size:12px;color:#777;margin-top:2px}
   table{width:100%;border-collapse:collapse;font-size:13px}
   th,td{text-align:left;padding:8px 6px;border-bottom:1px solid #eef1f4;vertical-align:top}
-  th{color:#777;font-weight:700;white-space:nowrap}
-  #questionsTable{min-width:1780px;table-layout:fixed}
-  #questionsTable td{word-break:keep-all;overflow-wrap:anywhere;line-height:1.45}
+  th{color:#777;font-weight:700}
   .muted{color:#999}.small{font-size:12px}
   .badge{display:inline-block;background:#e8f3ff;color:#1b5dbf;border-radius:999px;padding:2px 8px;font-size:11px;font-weight:700}
   .badge.ok{background:#e9f8ee;color:#1c8a45}
@@ -5295,10 +5512,10 @@ app.get('/admin', (req, res) => {
       <div style="overflow-x:auto" class="gap">
         <table id="questionsTable">
           <colgroup>
-            <col style="width:85px"><col style="width:70px"><col style="width:80px">
-            <col style="width:210px"><col style="width:420px">
-            <col style="width:70px"><col style="width:150px"><col style="width:240px">
-            <col style="width:140px"><col style="width:140px"><col style="width:140px"><col style="width:65px">
+            <col style="width:78px"><col style="width:56px"><col style="width:64px">
+            <col style="width:150px"><col style="min-width:320px">
+            <col style="width:56px"><col style="width:110px"><col style="width:220px">
+            <col style="width:90px"><col style="width:90px"><col style="width:90px"><col style="width:50px">
           </colgroup>
           <thead><tr><th>일자</th><th>시간</th><th>입력유형</th><th>질문/버튼</th><th>실제 답변 내용</th><th>결과</th><th>기존 연결</th><th>교정 학습</th><th>버튼 출발블록</th><th>현재 스킬블록</th><th>직전블록</th><th></th></tr></thead>
           <tbody></tbody>
@@ -5556,7 +5773,7 @@ async function loadQuestions(page){
       '<td>'+esc(e.date)+'</td>'+ 
       '<td>'+esc(e.time)+'</td>'+ 
       '<td>'+(e.inputType === '버튼클릭' ? '<span class="badge">버튼클릭</span>' : (e.inputType === '직접입력' ? '<span class="badge ok">직접입력</span>' : '<span class="small muted">'+esc(e.inputType||'기록없음')+'</span>'))+'</td>'+
-      '<td class="small" style="white-space:normal" title="'+esc(e.buttonText || e.query)+'">'+esc(e.buttonText || e.query)+'</td>'+ 
+      '<td class="small" style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(e.buttonText || e.query)+'">'+esc(e.buttonText || e.query)+'</td>'+ 
       '<td class="small" style="white-space:normal;word-break:break-word" title="'+esc(e.answerText||'')+'">'+esc(e.answerText ? (e.answerText.length>220 ? e.answerText.slice(0,220)+'…' : e.answerText) : '-')+'</td>'+
       '<td>'+(e.matched ? '<span class="badge ok">매칭</span>' : '<span class="badge" style="background:#fde8e8;color:#b02a2a">미매칭</span>')+'</td>'+ 
       '<td class="small muted">'+esc(e.matchedTitle||'-')+'</td>'+ 
