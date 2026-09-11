@@ -2561,18 +2561,24 @@ function buildBlockQuickReplies(block, blocks) {
   }));
   // 중복 제거
   const seen = new Set();
-  let deduped = out.filter(x => {
+  const deduped = out.filter(x => {
     const key = `${x.label}|${x.blockId || x.messageText || ''}`;
     if (seen.has(key)) return false;
     seen.add(key); return true;
   });
 
-  // 고등학교 전입학 안내에서는 하단 바로가기 중
-  // '초중학교 전입학'만 남깁니다.
-  // (제출서류/고등학교 전입학 절차는 현재 답변과 중복되어 제거)
-  const blockTitle = compactText((block && block.title) || '');
-  if (blockTitle === compactText('고등학교전입학')) {
-    deduped = deduped.filter(x => /초\s*중학교\s*전입학|초중학교전입학/.test(String(x.label || '').replace(/[·ㆍ]/g, '')));
+  // 고등학교 전입학 안내 화면 하단 바로가기에는
+  // '초중학교 전입학' 버튼 하나만 남깁니다.
+  // 본문/카드(고등학교 전입학 안내, AI 상담)는 그대로 유지합니다.
+  if (String((block && block.title) || '').trim() === '고등학교전입학') {
+    const elementaryMiddle = blocks.find(b => String((b && b.title) || '').trim() === '초중학교전입학');
+    if (elementaryMiddle) {
+      const item = makeKakaoQuickReply(elementaryMiddle);
+      item.label = '초중학교 전입학';
+      item.messageText = '초중학교 전입학';
+      return [item];
+    }
+    return [{ label: '초중학교 전입학', action: 'message', messageText: '초중학교 전입학' }];
   }
 
   return deduped.slice(0,10);
